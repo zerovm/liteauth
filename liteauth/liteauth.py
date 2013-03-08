@@ -44,7 +44,9 @@ class LiteAuth(object):
         #conf_path = conf.get('__file__')
         #self.swift = InternalClient('/etc/swift/proxy-server.conf', 'LiteAuth', 3)
         self.google_auth = '/login/google/'
-        self.shared_container = '/share/load'
+        self.shared_container = '/share/'
+        self.shared_container_add = 'load'
+        self.shared_container_remove = 'drop'
         self.google_prefix = 'g_'
         self.logger = get_logger(conf, log_route='lite-auth')
         self.log_headers = conf.get('log_headers', 'f').lower() in TRUE_VALUES
@@ -88,11 +90,13 @@ class LiteAuth(object):
             user_data = self.get_cached_user_data(env, token)
             if user_data:
                 if env.get('PATH_INFO', '').startswith(self.shared_container):
-                    path = env.get('PATH_INFO', '')[len(self.shared_container):]
+                    path = env.get('PATH_INFO', '')[(len(self.shared_container) - 1):]
                     try:
-                        account, container = split_path(path, 1, 2, True)
+                        op, account, container = split_path(path, 1, 3, True)
                     except ValueError, e:
                         return HTTPNotFound(body=str(e))(env, start_response)
+                    if not op in [self.shared_container_add, self.shared_container_remove]:
+                        return HTTPNotFound()(env, start_response)
                     account_req = Request.blank('/%s/%s' % (self.version, user_data))
                     account_req.method = 'HEAD'
                     resp = account_req.get_response(self.app)
@@ -104,13 +108,15 @@ class LiteAuth(object):
                             shared = json.loads(resp.headers['x-account-meta-shared'])
                         except Exception:
                             pass
-                    shared['%s/%s' % (account, container)] = 'shared'
+                    if self.shared_container_add in op:
+                        shared['%s/%s' % (account, container)] = 'shared'
+                    elif self.shared_container_remove in op:
+                        del shared['%s/%s' % (account, container)]
                     account_req = Request.blank('/%s/%s' % (self.version, user_data))
                     account_req.method = 'POST'
                     self.copy_account_metadata(resp.headers, account_req.headers)
                     account_req.headers['x-account-meta-shared'] = json.dumps(shared)
                     return account_req.get_response(self.app)(env, start_response)
-
                 env['REMOTE_USER'] = user_data
                 env['HTTP_X_AUTH_TOKEN'] = '%s,%s' % (user_data, token)
                 env['swift.authorize'] = self.authorize
