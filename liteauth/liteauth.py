@@ -3,17 +3,32 @@ from urllib import quote, unquote
 from time import gmtime, strftime, time
 from urlparse import parse_qs
 import datetime
+
 try:
     import simplejson as json
 except ImportError:
     import json
 
 from swift.common.http import HTTP_CLIENT_CLOSED_REQUEST
-from swift.common.oauth import Client
 from swift.common.swob import HTTPFound, Response, Request, HTTPUnauthorized, HTTPForbidden, HTTPNotFound
 from swift.common.utils import cache_from_env, get_logger, TRUE_VALUES, split_path
-from swift.common.middleware.acl import clean_acl, parse_lite_acl
-from swift.common.bufferedhttp import http_connect
+from swift.common.middleware.acl import clean_acl
+from oauth import Client
+
+
+def parse_lite_acl(acl_string):
+    """
+    Parses Litestack ACL string into an account list.
+
+    :param acl_string: The standard Swift ACL string to parse.
+    :returns: list of user accounts
+    """
+    accounts = []
+    if acl_string:
+        for value in acl_string.split(','):
+            accounts.append(value)
+    return accounts
+
 
 class LiteAuth(object):
 
