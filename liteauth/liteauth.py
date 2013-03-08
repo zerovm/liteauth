@@ -239,7 +239,7 @@ class LiteAuth(object):
             memcache_client = cache_from_env(env)
             memcache_token_key = '%s/token/%s' % (self.google_prefix, client.access_token)
             memcache_client.set(memcache_token_key, (expires, user_data),
-                timeout=float(expires - time()))
+                time=float(expires - time()))
         return user_data
 
     def authorize(self, req):
