@@ -1,7 +1,6 @@
 from Cookie import SimpleCookie
 from urllib import quote, unquote
 from time import gmtime, strftime, time
-from urlparse import parse_qs
 import datetime
 
 try:
@@ -10,7 +9,7 @@ except ImportError:
     import json
 
 from swift.common.http import HTTP_CLIENT_CLOSED_REQUEST
-from swift.common.swob import HTTPFound, Response, Request, HTTPUnauthorized, HTTPForbidden, HTTPNotFound
+from swift.common.swob import HTTPFound, Response, Request, HTTPUnauthorized, HTTPForbidden, HTTPNotFound, wsgify
 from swift.common.utils import cache_from_env, get_logger, TRUE_VALUES, split_path
 from swift.common.middleware.acl import clean_acl
 from oauth import Client
@@ -41,8 +40,6 @@ class LiteAuth(object):
         self.service_domain = conf.get('service_domain')
         self.service_endpoint = conf.get('service_endpoint', 'https://' + self.service_domain)
         self.google_scope = conf.get('google_scope')
-        #conf_path = conf.get('__file__')
-        #self.swift = InternalClient('/etc/swift/proxy-server.conf', 'LiteAuth', 3)
         self.google_auth = '/login/google/'
         self.shared_container = '/share/'
         self.shared_container_add = 'load'
@@ -60,48 +57,44 @@ class LiteAuth(object):
             pass
         return auth_token
 
-    def __call__(self, env, start_response):
-        #for acc in self.system_accounts:
-        #    if env.get('PATH_INFO', '').startswith('/%s/%s' % (self.version, acc)):
-        #        return HTTPForbidden()(env, start_response)
-        if env.get('PATH_INFO', '').startswith(self.google_auth):
-            state = [None]
-            qs = env.get('QUERY_STRING')
-            if qs:
-                code = parse_qs(qs).get('code', None)
-                state = parse_qs(qs).get('state', [None])
+    @wsgify
+    def __call__(self, req):
+        if req.path.startswith(self.google_auth):
+            state = None
+            if req.params:
+                code = req.params.get('code')
+                state = req.params.get('state')
                 if code:
-                    if not 'eventlet.posthooks' in env:
-                        req = Request(env)
+                    if not 'eventlet.posthooks' in req.environ:
                         req.bytes_transferred = '-'
                         req.client_disconnect = False
                         req.start_time = time()
-                        response = self.do_google_login(env, code[0], state[0])(env, start_response)
+                        response = self.do_google_login(req, code, state)
                         req.response = response
-                        self.posthooklogger(env, req)
+                        self.posthooklogger(req.environ, req)
                         return response
                     else:
-                        return self.do_google_login(env, code[0], state[0])(env, start_response)
-            return self.do_google_oauth(state[0])(env, start_response)
-        token = self.extract_auth_token(env)
+                        return self.do_google_login(req, code, state)
+            return self.do_google_oauth(state)
+        token = self.extract_auth_token(req.environ)
         if token:
-            env['HTTP_X_AUTH_TOKEN'] = token
-            env['HTTP_X_STORAGE_TOKEN'] = token
-            user_data = self.get_cached_user_data(env, token)
+            req.headers['x-auth-token'] = token
+            req.headers['x-storage-token'] = token
+            user_data = self.get_cached_user_data(req.environ, token)
             if user_data:
-                if env.get('PATH_INFO', '').startswith(self.shared_container):
-                    path = env.get('PATH_INFO', '')[(len(self.shared_container) - 1):]
+                if req.path.startswith(self.shared_container):
+                    path = req.path[(len(self.shared_container) - 1):]
                     try:
                         op, account, container = split_path(path, 1, 3, True)
                     except ValueError, e:
-                        return HTTPNotFound(body=str(e))(env, start_response)
+                        return HTTPNotFound(body=str(e))
                     if not op in [self.shared_container_add, self.shared_container_remove]:
-                        return HTTPNotFound()(env, start_response)
+                        return HTTPNotFound()
                     account_req = Request.blank('/%s/%s' % (self.version, user_data))
                     account_req.method = 'HEAD'
                     resp = account_req.get_response(self.app)
                     if resp.status_int >= 300:
-                        return HTTPNotFound(body=resp.body)(env, start_response)
+                        return HTTPNotFound(body=resp.body)
                     shared = {}
                     if 'x-account-meta-shared' in resp.headers:
                         try:
@@ -116,17 +109,14 @@ class LiteAuth(object):
                     account_req.method = 'POST'
                     self.copy_account_metadata(resp.headers, account_req.headers)
                     account_req.headers['x-account-meta-shared'] = json.dumps(shared)
-                    return account_req.get_response(self.app)(env, start_response)
-                env['REMOTE_USER'] = user_data
-                env['HTTP_X_AUTH_TOKEN'] = '%s,%s' % (user_data, token)
-                env['swift.authorize'] = self.authorize
-                env['swift.clean_acl'] = clean_acl
+                    return account_req.get_response(self.app)
+                req.environ['REMOTE_USER'] = user_data
+                req.headers['x-auth-token'] = '%s,%s' % (user_data, token)
             else:
-                return HTTPUnauthorized()(env, start_response)
-        else:
-            env['swift.authorize'] = self.authorize
-            env['swift.clean_acl'] = clean_acl
-        return self.app(env, start_response)
+                return HTTPUnauthorized()
+        req.environ['swift.authorize'] = self.authorize
+        req.environ['swift.clean_acl'] = clean_acl
+        return self.app
 
     def do_google_oauth(self, state=None):
         c = Client(auth_endpoint='https://accounts.google.com/o/oauth2/auth',
@@ -135,18 +125,17 @@ class LiteAuth(object):
         loc = c.auth_uri(scope=self.google_scope.split(','), access_type='offline', state=state)
         return HTTPFound(location=loc)
 
-    def do_google_login(self, env, code, state=None):
-        req = Request(env)
-        if 'eventlet.posthooks' in env:
+    def do_google_login(self, req, code, state=None):
+        if 'eventlet.posthooks' in req.environ:
             req.bytes_transferred = '-'
             req.client_disconnect = False
             req.start_time = time()
-            env['eventlet.posthooks'].append(
+            req.environ['eventlet.posthooks'].append(
                 (self.posthooklogger, (req,), {}))
         if 'logout' in code:
-            auth_token = self.extract_auth_token(env)
+            auth_token = self.extract_auth_token(req.environ)
             if auth_token:
-                self.delete_user_data(env, auth_token)
+                self.delete_user_data(req.environ, auth_token)
             cookie = self.create_session_cookie()
             resp = Response(request=req, status=302,
                 headers={
@@ -173,7 +162,7 @@ class LiteAuth(object):
         if not token:
             req.response = HTTPUnauthorized()
             return req.response
-        user_data = self.get_new_user_data(env, c)
+        user_data = self.get_new_user_data(req.environ, c)
         if not user_data:
             req.response = HTTPForbidden()
             return req.response
@@ -196,7 +185,7 @@ class LiteAuth(object):
                 'x-storage-token': token,
                 'x-storage-url': '%s/%s/%s' % (self.service_endpoint, self.version, user_data),
                 'set-cookie': cookie,
-                'location': '%s%s?account=%s' % (self.service_endpoint, state, user_data)})
+                'location': '%s%s?account=%s' % (self.service_endpoint, state or '/', user_data)})
         #print resp.headers
         req.response = resp
         return resp
