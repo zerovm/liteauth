@@ -149,7 +149,7 @@ class LiteAuth(object):
             client_id=self.google_client_id,
             client_secret=self.google_client_secret)
         c.request_token(code=code)
-        print c.__dict__
+        self.logger.info(c.__dict__)
         token = c.access_token
         if hasattr(c, 'refresh_token'):
             rc = Client(token_endpoint=c.token_endpoint,
@@ -160,7 +160,7 @@ class LiteAuth(object):
             rc.request_token(grant_type='refresh_token',
                 refresh_token=c.refresh_token)
             token = rc.access_token
-            print rc.__dict__
+            self.logger.info(rc.__dict__)
         if not token:
             req.response = HTTPUnauthorized()
             return req.response
