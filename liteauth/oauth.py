@@ -95,8 +95,7 @@ class Client(object):
             msg = urlopen(self.token_endpoint, urlencode(kwargs).encode(
                 'utf-8'))
         except HTTPError, e:
-            print e
-            return
+            return e
         data = parser(msg.read().decode(msg.info().get_content_charset() or
                                         'utf-8'))
 
