@@ -297,7 +297,7 @@ class LiteAuth(object):
         except ValueError:
             self.logger.increment('errors')
             return HTTPNotFound(request=req)
-        if not account or not account.startswith(self.google_prefix):
+        if not account:
             return self.denied_response(req)
         user_data = (req.remote_user or '')
         if req.method in 'POST' and 'x-zerovm-execute' in req.headers \
