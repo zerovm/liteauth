@@ -30,6 +30,44 @@ def parse_lite_acl(acl_string):
     return accounts
 
 
+def retrieve_metadata(app, version, account_id, name):
+    account_req = Request.blank('/%s/%s' % (version, account_id))
+    account_req.method = 'HEAD'
+    resp = account_req.get_response(app)
+    if resp.status_int >= 300:
+        return None
+    i = 0
+    meta = ''
+    key = 'x-account-meta-%s0' % name
+    while key in resp.headers:
+        meta += resp.headers[key]
+        i += 1
+        key = 'x-account-meta-%s%d' % (name, i)
+    try:
+        user_data = json.loads(meta)
+    except:
+        return None
+    return user_data
+
+
+def store_metadata(app, version, account_id, name, user_data):
+    try:
+        user_data = json.dumps(user_data)
+    except:
+        return False
+    userdata_req = Request.blank('/%s/%s' % (version, account_id))
+    userdata_req.method = 'POST'
+    i = 0
+    while user_data:
+        userdata_req.headers['x-account-meta-%s%d' % (name, i)] = user_data[:MAX_META_VALUE_LENGTH]
+        user_data = user_data[MAX_META_VALUE_LENGTH:]
+        i += 1
+    resp = userdata_req.get_response(app)
+    if resp.status_int >= 300:
+        return False
+    return True
+
+
 class LiteAuth(object):
 
     def __init__(self, app, conf):
@@ -37,14 +75,19 @@ class LiteAuth(object):
         self.conf = conf
         self.version = 'v1'
         self.google_client_id = conf.get('google_client_id')
+        if not self.google_client_id:
+            raise ValueError('google_client_id not set in config file')
         self.google_client_secret = conf.get('google_client_secret')
+        if not self.google_client_secret:
+            raise ValueError('google_client_secret not set in config file')
         self.service_domain = conf.get('service_domain')
+        if not self.service_domain:
+            raise ValueError('service_domain not set in config file')
         self.service_endpoint = conf.get('service_endpoint', 'https://' + self.service_domain)
         self.google_scope = conf.get('google_scope')
+        if not self.google_scope:
+            raise ValueError('google_scope not set in config file')
         self.google_auth = '/login/google/'
-        self.shared_container = '/share/'
-        self.shared_container_add = 'load'
-        self.shared_container_remove = 'drop'
         self.google_prefix = 'g_'
         self.logger = get_logger(conf, log_route='lite-auth')
         self.log_headers = conf.get('log_headers', 'f').lower() in TRUE_VALUES
@@ -60,24 +103,6 @@ class LiteAuth(object):
         except KeyError:
             pass
         return auth_token
-
-    def handle_shared_container(self, account_id, path):
-        try:
-            op, account, container = split_path(path, 1, 3, True)
-        except ValueError, e:
-            return HTTPNotFound(body=str(e))
-        if not op in [self.shared_container_add, self.shared_container_remove]:
-            return HTTPNotFound()
-        shared = self.retrieve_metadata(account_id, 'shared')
-        if not shared:
-            shared = {}
-        if self.shared_container_add in op:
-            shared['%s/%s' % (account, container)] = 'shared'
-        elif self.shared_container_remove in op:
-            del shared['%s/%s' % (account, container)]
-        if self.store_metadata(account_id, 'shared', shared):
-            return Response(body='Successfully added shared container')
-        return HTTPNotFound()
 
     def __call__(self, env, start_response):
         req = Request(env)
@@ -107,9 +132,6 @@ class LiteAuth(object):
             account_id = self.get_cached_account_id(req.environ, token)
             if not account_id:
                 return HTTPUnauthorized()(env, start_response)
-            if req.path.startswith(self.shared_container):
-                path = req.path[(len(self.shared_container) - 1):]
-                return self.handle_shared_container(account_id, path)(env, start_response)
             req.environ['REMOTE_USER'] = account_id
             req.headers['x-auth-token'] = '%s,%s' % (account_id, token)
         req.environ['swift.authorize'] = self.authorize
@@ -117,18 +139,20 @@ class LiteAuth(object):
         new_cookie = req.environ.get('refresh_cookie', None)
         if new_cookie:
             del req.environ['refresh_cookie']
+
             def cookie_resp(status, response_headers, exc_info=None):
                 response_headers.append(('Set-Cookie', new_cookie))
                 return start_response(status, response_headers, exc_info)
+
             return self.app(env, cookie_resp)
         return self.app(env, start_response)
 
     def do_google_oauth(self, state=None, approval_prompt='auto'):
         c = Client(auth_endpoint='https://accounts.google.com/o/oauth2/auth',
-            client_id=self.google_client_id,
-            redirect_uri='%s%s' % (self.service_endpoint, self.google_auth))
+                   client_id=self.google_client_id,
+                   redirect_uri='%s%s' % (self.service_endpoint, self.google_auth))
         loc = c.auth_uri(scope=self.google_scope.split(','), access_type='offline',
-            state=state, approval_prompt=approval_prompt)
+                         state=state or '/', approval_prompt=approval_prompt)
         return HTTPFound(location=loc)
 
     def do_google_login(self, req, code, state=None):
@@ -144,25 +168,25 @@ class LiteAuth(object):
                 self.del_cached_account_id(req.environ, auth_token)
             cookie = self.create_session_cookie()
             resp = Response(request=req, status=302,
-                headers={
-                    'set-cookie': cookie,
-                    'location': '%s%s?account=logout' % (self.service_endpoint, state)})
+                            headers={
+                                'set-cookie': cookie,
+                                'location': '%s%s?account=logout' % (self.service_endpoint, state)})
             req.response = resp
             return resp
         c = Client(token_endpoint='https://accounts.google.com/o/oauth2/token',
-            resource_endpoint='https://www.googleapis.com/oauth2/v1',
-            redirect_uri='%s%s' % (self.service_endpoint, self.google_auth),
-            client_id=self.google_client_id,
-            client_secret=self.google_client_secret)
+                   resource_endpoint='https://www.googleapis.com/oauth2/v1',
+                   redirect_uri='%s%s' % (self.service_endpoint, self.google_auth),
+                   client_id=self.google_client_id,
+                   client_secret=self.google_client_secret)
         c.request_token(code=code)
         token = c.access_token
         if hasattr(c, 'refresh_token'):
             rc = Client(token_endpoint=c.token_endpoint,
-                client_id=c.client_id,
-                client_secret=c.client_secret,
-                resource_endpoint=c.resource_endpoint)
+                        client_id=c.client_id,
+                        client_secret=c.client_secret,
+                        resource_endpoint=c.resource_endpoint)
             rc.request_token(grant_type='refresh_token',
-                refresh_token=c.refresh_token)
+                             refresh_token=c.refresh_token)
             token = rc.access_token
         if not token:
             req.response = HTTPUnauthorized()
@@ -171,23 +195,23 @@ class LiteAuth(object):
         if not user_info:
             req.response = HTTPForbidden()
             return req.response
-        account_id = self.google_prefix + user_info.get('id')
-        stored_info = self.retrieve_metadata(account_id, 'userdata')
+        account_id = self.get_account_id(user_info)
+        stored_info = retrieve_metadata(self.app, self.version, account_id, 'userdata')
         if not stored_info:
             if not hasattr(c, 'refresh_token'):
                 return self.do_google_oauth(state=state, approval_prompt='force')
             user_info['rtoken'] = c.refresh_token
-            if not self.store_metadata(account_id, 'userdata', user_info):
+            if not store_metadata(self.app, self.version, account_id, 'userdata', user_info):
                 req.response = HTTPInternalServerError()
                 return req.response
         cookie = self.create_session_cookie(token=token, expires_in=c.expires_in)
         resp = Response(request=req, status=302,
-            headers={
-                'x-auth-token': token,
-                'x-storage-token': token,
-                'x-storage-url': '%s/%s/%s' % (self.service_endpoint, self.version, account_id),
-                'set-cookie': cookie,
-                'location': '%s%s?account=%s' % (self.service_endpoint, state or '/', account_id)})
+                        headers={
+                            'x-auth-token': token,
+                            'x-storage-token': token,
+                            'x-storage-url': '%s/%s/%s' % (self.service_endpoint, self.version, account_id),
+                            'set-cookie': cookie,
+                            'location': '%s%s?account=%s' % (self.service_endpoint, state or '/', account_id)})
         #print resp.headers
         req.response = resp
         return resp
@@ -201,42 +225,6 @@ class LiteAuth(object):
         expiration = datetime.datetime.utcnow() + datetime.timedelta(seconds=expires_in)
         cookie['session']['expires'] = expiration.strftime('%a, %d %b %Y %H:%M:%S GMT')
         return cookie['session'].output(header='').strip()
-
-    def retrieve_metadata(self, account_id, name):
-        account_req = Request.blank('/%s/%s' % (self.version, account_id))
-        account_req.method = 'HEAD'
-        resp = account_req.get_response(self.app)
-        if resp.status_int >= 300:
-            return None
-        i = 0
-        meta = ''
-        key = 'x-account-meta-%s0' % name
-        while key in resp.headers:
-            meta += resp.headers[key]
-            i += 1
-            key = 'x-account-meta-%s%d' % (name, i)
-        try:
-            user_data = json.loads(meta)
-        except:
-            return None
-        return user_data
-
-    def store_metadata(self, account_id, name, user_data):
-        try:
-            user_data = json.dumps(user_data)
-        except:
-            return False
-        userdata_req = Request.blank('/%s/%s' % (self.version, account_id))
-        userdata_req.method = 'POST'
-        i = 0
-        while user_data:
-            userdata_req.headers['x-account-meta-%s%d' % (name, i)] = user_data[:MAX_META_VALUE_LENGTH]
-            user_data = user_data[MAX_META_VALUE_LENGTH:]
-            i += 1
-        resp = userdata_req.get_response(self.app)
-        if resp.status_int >= 300:
-            return False
-        return True
 
     def del_cached_account_id(self, env, token):
         memcache_client = cache_from_env(env)
@@ -263,31 +251,35 @@ class LiteAuth(object):
         if cached_auth_data:
             expires, account_id = cached_auth_data
             if expires - time() < self.refresh_before:
-                user_data = self.retrieve_metadata(account_id, 'userdata')
+                user_data = retrieve_metadata(self.app, self.version, account_id, 'userdata')
                 if not user_data:
                     return self.do_google_oauth(state=None, approval_prompt='force')
                 rtoken = user_data.get('rtoken', None)
                 if not rtoken:
                     return self.do_google_oauth(state=None, approval_prompt='force')
                 client = Client(token_endpoint='https://accounts.google.com/o/oauth2/token',
-                    resource_endpoint='https://www.googleapis.com/oauth2/v1',
-                    client_id=self.google_client_id,
-                    client_secret=self.google_client_secret)
+                                resource_endpoint='https://www.googleapis.com/oauth2/v1',
+                                client_id=self.google_client_id,
+                                client_secret=self.google_client_secret)
                 error = client.request_token(grant_type='refresh_token',
-                    refresh_token=rtoken)
+                                             refresh_token=rtoken)
                 if error:
                     self.logger.info('%s' % str(error))
                 cookie = self.create_session_cookie(token=client.access_token,
-                    expires_in=client.expires_in)
+                                                    expires_in=client.expires_in)
                 env['refresh_cookie'] = cookie
                 self.cache_account_id(env, account_id,
-                    client.access_token, client.expires_in)
+                                      client.access_token, client.expires_in)
+        return account_id
+
+    def get_account_id(self, user_info):
+        account_id = self.google_prefix + user_info.get('id')
         return account_id
 
     def get_new_user_info(self, env, client):
         user_info = client.request('/userinfo')
         if user_info:
-            account_id = self.google_prefix + user_info.get('id')
+            account_id = self.get_account_id(user_info)
             self.cache_account_id(env, account_id, client.access_token, client.expires_in)
         return user_info
 
@@ -301,10 +293,10 @@ class LiteAuth(object):
             return self.denied_response(req)
         user_data = (req.remote_user or '')
         if req.method in 'POST' and 'x-zerovm-execute' in req.headers \
-            and account in user_data:
-                return None
-        if account in user_data and\
-           (req.method not in ('DELETE', 'PUT', 'POST') or container):
+                and account in user_data:
+            return None
+        if account in user_data and \
+                (req.method not in ('DELETE', 'PUT', 'POST') or container):
             req.environ['swift_owner'] = True
             return None
         if container:
@@ -339,23 +331,23 @@ class LiteAuth(object):
         logged_headers = None
         if self.log_headers:
             logged_headers = '\n'.join('%s: %s' % (k, v)
-                for k, v in req.headers.items())
+                                       for k, v in req.headers.items())
         status_int = response.status_int
-        if getattr(req, 'client_disconnect', False) or\
-           getattr(response, 'client_disconnect', False):
+        if getattr(req, 'client_disconnect', False) or \
+                getattr(response, 'client_disconnect', False):
             status_int = HTTP_CLIENT_CLOSED_REQUEST
         self.logger.info(
             ' '.join(quote(str(x)) for x in (client or '-',
-                     req.remote_addr or '-', strftime('%d/%b/%Y/%H/%M/%S', gmtime()),
-                     req.method, the_request, req.environ['SERVER_PROTOCOL'],
-                     status_int, req.referer or '-', req.user_agent or '-',
-                     req.headers.get('x-auth-token',
-                         req.headers.get('x-auth-admin-user', '-')),
-                     getattr(req, 'bytes_transferred', 0) or '-',
-                     getattr(response, 'bytes_transferred', 0) or '-',
-                     req.headers.get('etag', '-'),
-                     req.environ.get('swift.trans_id', '-'), logged_headers or '-',
-                     trans_time)))
+                                             req.remote_addr or '-', strftime('%d/%b/%Y/%H/%M/%S', gmtime()),
+                                             req.method, the_request, req.environ['SERVER_PROTOCOL'],
+                                             status_int, req.referer or '-', req.user_agent or '-',
+                                             req.headers.get('x-auth-token',
+                                                             req.headers.get('x-auth-admin-user', '-')),
+                                             getattr(req, 'bytes_transferred', 0) or '-',
+                                             getattr(response, 'bytes_transferred', 0) or '-',
+                                             req.headers.get('etag', '-'),
+                                             req.environ.get('swift.trans_id', '-'), logged_headers or '-',
+                                             trans_time)))
 
 
 def filter_factory(global_conf, **local_conf):
