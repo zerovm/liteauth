@@ -173,6 +173,7 @@ class LiteAuth(object):
             req.environ['REMOTE_USER'] = account_id
             req.headers['x-auth-token'] = '%s,%s' % (account_id, token)
             if self.is_whitelist_request(req):
+                self.logger.info('Whitelist request: %s' % req.path)
                 return self.app(env, start_response)
         req.environ['swift.authorize'] = self.authorize
         req.environ['swift.clean_acl'] = clean_acl
