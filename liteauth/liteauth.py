@@ -71,7 +71,7 @@ def store_metadata(app, version, account_id, name, user_data):
 def get_account_from_whitelist(whitelist_url, app, email):
     if not whitelist_url or not email:
         return None
-    req = Request.blank('/%s/%s' % (whitelist_url, email))
+    req = Request.blank('/%s/%s' % (whitelist_url, quote(email)))
     req.method = 'GET'
     resp = req.get_response(app)
     if resp.status_int >= 300:
@@ -82,7 +82,7 @@ def get_account_from_whitelist(whitelist_url, app, email):
 def store_account_in_whitelist(whitelist_url, app, email, account_id):
     if not whitelist_url or not email:
         return False
-    req = Request.blank('/%s/%s' % (whitelist_url, email))
+    req = Request.blank('/%s/%s' % (whitelist_url, quote(email)))
     req.method = 'PUT'
     req.headers['content-type'] = 'text/plain'
     req.body = str(account_id)
