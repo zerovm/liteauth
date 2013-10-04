@@ -240,6 +240,7 @@ class LiteAuth(object):
             if not email:
                 return HTTPForbidden()
             whitelist_id = get_account_from_whitelist(self.whitelist_url, self.app, email)
+            self.logger.info('Whitelist is %s for user: %s' % (whitelist_id, json.dumps(user_info)))
             if not whitelist_id:
                 return Response(request=req, status=402, body='Account not in whitelist')
             if 'new' in whitelist_id:
