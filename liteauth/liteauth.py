@@ -68,6 +68,17 @@ def store_metadata(app, version, account_id, name, user_data):
     return True
 
 
+def get_account_from_whitelist(whitelist_url, app, email):
+    if not whitelist_url or not email:
+        return None
+    req = Request.blank('/%s/%s' % (whitelist_url, email))
+    req.method = 'GET'
+    resp = req.get_response(app)
+    if resp.status_int >= 300:
+        return None
+    return resp.body.strip()
+
+
 class LiteAuth(object):
 
     def __init__(self, app, conf):
@@ -95,6 +106,9 @@ class LiteAuth(object):
         # try to refresh token
         # when less than this amount of seconds left
         self.refresh_before = conf.get('token_refresh_before', 60 * 29)
+        # url for whitelist objects
+        # Example: /v1/liteauth/whitelist
+        self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
 
     def extract_auth_token(self, env):
         auth_token = None
@@ -123,8 +137,7 @@ class LiteAuth(object):
                     else:
                         return self.do_google_login(
                             req, code, state)(env, start_response)
-            return self.do_google_oauth(
-                state)(env, start_response)
+            return self.do_google_oauth(state)(env, start_response)
         token = self.extract_auth_token(req.environ)
         if token:
             req.headers['x-auth-token'] = token
@@ -196,6 +209,13 @@ class LiteAuth(object):
             req.response = HTTPForbidden()
             return req.response
         account_id = self.get_account_id(user_info)
+        if self.whitelist_url:
+            email = user_info.get('email', None)
+            if not email:
+                return HTTPForbidden()
+            whitelist_id = get_account_from_whitelist(self.whitelist_url, self.app, email)
+            if not account_id in whitelist_id:
+                return Response(request=req, status=402, body='Account not in whitelist')
         stored_info = retrieve_metadata(self.app, self.version, account_id, 'userdata')
         if not stored_info:
             if not hasattr(c, 'refresh_token'):
@@ -236,10 +256,10 @@ class LiteAuth(object):
     def cache_account_id(self, env, account_id, token, expires_in):
         expires = time() + expires_in
         memcache_client = cache_from_env(env)
-        memcache_token_key = '%s/token/%s'\
+        memcache_token_key = '%s/token/%s' \
                              % (self.google_prefix, token)
         memcache_client.set(memcache_token_key, (expires, account_id),
-            time=float(expires - time()))
+                            time=float(expires - time()))
 
     def get_cached_account_id(self, env, token):
         account_id = None
