@@ -79,6 +79,19 @@ def get_account_from_whitelist(whitelist_url, app, email):
     return resp.body.strip()
 
 
+def store_account_in_whitelist(whitelist_url, app, email, account_id):
+    if not whitelist_url or not email:
+        return False
+    req = Request.blank('/%s/%s' % (whitelist_url, email))
+    req.method = 'PUT'
+    req.headers['content-type'] = 'text/plain'
+    req.body = str(account_id)
+    resp = req.get_response(app)
+    if resp.status_int >= 300:
+        return False
+    return True
+
+
 class LiteAuth(object):
 
     def __init__(self, app, conf):
@@ -227,8 +240,11 @@ class LiteAuth(object):
             if not email:
                 return HTTPForbidden()
             whitelist_id = get_account_from_whitelist(self.whitelist_url, self.app, email)
-            if not whitelist_id or whitelist_id not in account_id:
+            if not whitelist_id:
                 return Response(request=req, status=402, body='Account not in whitelist')
+            if 'new' in whitelist_id:
+                if not store_account_in_whitelist(self.whitelist_url, self.app, email, account_id):
+                    return HTTPInternalServerError()
         stored_info = retrieve_metadata(self.app, self.version, account_id, 'userdata')
         if not stored_info:
             if not hasattr(c, 'refresh_token'):
