@@ -227,7 +227,7 @@ class LiteAuth(object):
             if not email:
                 return HTTPForbidden()
             whitelist_id = get_account_from_whitelist(self.whitelist_url, self.app, email)
-            if not whitelist_id in account_id:
+            if not whitelist_id or whitelist_id not in account_id:
                 return Response(request=req, status=402, body='Account not in whitelist')
         stored_info = retrieve_metadata(self.app, self.version, account_id, 'userdata')
         if not stored_info:
