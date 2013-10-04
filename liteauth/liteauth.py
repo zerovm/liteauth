@@ -101,7 +101,7 @@ class LiteAuth(object):
         self.google_auth = '/login/google/'
         self.google_prefix = 'g_'
         self.logger = get_logger(conf, log_route='lite-auth')
-        self.log_headers = conf.get('log_headers', 'f').lower() in TRUE_VALUES
+        self.log_headers = conf.get('log_headers', 'false').lower() in TRUE_VALUES
         self.system_accounts = conf.get('system_accounts', '').split()
         # try to refresh token
         # when less than this amount of seconds left
@@ -109,6 +109,8 @@ class LiteAuth(object):
         # url for whitelist objects
         # Example: /v1/liteauth/whitelist
         self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
+        # if set to 'true' will allow getting whitelist data even for un-authorized clients
+        self.whitelist_is_public = conf.get('whitelist_public', 'false').lower() in TRUE_VALUES
 
     def extract_auth_token(self, env):
         auth_token = None
@@ -118,8 +120,17 @@ class LiteAuth(object):
             pass
         return auth_token
 
+    def is_whitelist_request(self, req):
+        if self.whitelist_url \
+                and req.path.startswith(self.whitelist_url) \
+                and req.method in ['GET', 'HEAD']:
+            return True
+        return False
+
     def __call__(self, env, start_response):
         req = Request(env)
+        if self.whitelist_is_public and self.is_whitelist_request(req):
+            return self.app(env, start_response)
         if req.path.startswith(self.google_auth):
             state = None
             if req.params:
@@ -147,6 +158,8 @@ class LiteAuth(object):
                 return HTTPUnauthorized()(env, start_response)
             req.environ['REMOTE_USER'] = account_id
             req.headers['x-auth-token'] = '%s,%s' % (account_id, token)
+            if self.is_whitelist_request(req):
+                return self.app(env, start_response)
         req.environ['swift.authorize'] = self.authorize
         req.environ['swift.clean_acl'] = clean_acl
         new_cookie = req.environ.get('refresh_cookie', None)
