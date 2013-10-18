@@ -13,17 +13,27 @@ try:
 except ImportError:
     import json
 
+# CACHE_KEYS = [{'key': 'systime', 'factor': 1000},
+#               {'key': 'usertime', 'factor': 1000},
+#               {'key': 'dskreads', 'factor': (1.0 / 1000 / 1000)},
+#               {'key': 'dskrdbytes', 'factor': (1.0 / 1024 / 1024)},
+#               {'key': 'dskwrites', 'factor': (1.0 / 1000 / 1000)},
+#               {'key': 'dskwrbytes', 'factor': (1.0 / 1024 / 1024)},
+#               {'key': 'netreads', 'factor': (1.0 / 1000 / 1000)},
+#               {'key': 'netrdbytes', 'factor': (1.0 / 1024 / 1024)},
+#               {'key': 'netwrites', 'factor': (1.0 / 1000 / 1000)},
+#               {'key': 'netwrbytes', 'factor': (1.0 / 1024 / 1024)}]
+
 CACHE_KEYS = [{'key': 'systime', 'factor': 1000},
               {'key': 'usertime', 'factor': 1000},
-              {'key': 'dskreads', 'factor': (1.0 / 1000 / 1000)},
-              {'key': 'dskrdbytes', 'factor': (1.0 / 1024 / 1024)},
-              {'key': 'dskwrites', 'factor': (1.0 / 1000 / 1000)},
-              {'key': 'dskwrbytes', 'factor': (1.0 / 1024 / 1024)},
-              {'key': 'netreads', 'factor': (1.0 / 1000 / 1000)},
-              {'key': 'netrdbytes', 'factor': (1.0 / 1024 / 1024)},
-              {'key': 'netwrites', 'factor': (1.0 / 1000 / 1000)},
-              {'key': 'netwrbytes', 'factor': (1.0 / 1024 / 1024)}]
-
+              {'key': 'dskreads', 'factor': 1},
+              {'key': 'dskrdbytes', 'factor': 1},
+              {'key': 'dskwrites', 'factor': 1},
+              {'key': 'dskwrbytes', 'factor': 1},
+              {'key': 'netreads', 'factor': 1},
+              {'key': 'netrdbytes', 'factor': 1},
+              {'key': 'netwrites', 'factor': 1},
+              {'key': 'netwrbytes', 'factor': 1}]
 
 class LiteAccountingContext(WSGIContext):
     def __init__(self, wsgi_app, logger, liteacc):
