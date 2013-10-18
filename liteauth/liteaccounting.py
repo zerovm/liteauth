@@ -1,6 +1,7 @@
 from eventlet import Queue, spawn_n, Timeout, sleep
 import random
 import time
+from eventlet.green.Queue import Empty
 from swift.common.http import is_success
 from swift.common.middleware.memcache import MemcacheMiddleware
 from swift.common.swob import Request
@@ -79,9 +80,12 @@ class LiteAccounting(object):
         start = time.time()
         while True:
             try:
-                account_id = self.queue.get(block=False)
-                if account_id:
+                try:
+                    account_id = self.queue.get(block=False)
                     accounts[account_id] = True
+                except Empty:
+                    account_id = None
+                    pass
                 if (time.time() - start) > self.interval:
                     try:
                         with Timeout(self.interval):
