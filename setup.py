@@ -22,6 +22,7 @@ setup(
         'paste.filter_factory': [
 		'liteauth=liteauth.liteauth:filter_factory',
 		'litebilling=liteauth.litebilling:filter_factory',
+        'liteaccounting=liteauth.liteaccounting:filter_factory',
         ],
     },
 )
