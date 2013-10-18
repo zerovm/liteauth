@@ -1,6 +1,7 @@
 from eventlet import Queue, spawn_n, Timeout, sleep
 import random
 import time
+import re
 from eventlet.green.Queue import Empty
 from swift.common.http import is_success
 from swift.common.middleware.memcache import MemcacheMiddleware
@@ -37,9 +38,8 @@ class LiteAccountingContext(WSGIContext):
         if 'x-nexe-cdr-line' in headers and account_id:
             totals = []
             total_time, line = headers['x-nexe-cdr-line'].split(', ', 1)
-            node_lines = line.split(',')
-            for line in node_lines:
-                rtime, line = line.split(', ', 1)
+            node_lines = re.split(r'\s*,\s*', line)
+            for rtime, line in zip(*[iter(node_lines)]*2):
                 accounting_info = line.split(' ')
                 total = self.liteacc.cache_accounting_info(account_id, rtime, accounting_info)
                 totals.extend(total)
