@@ -31,14 +31,18 @@ class LiteAccountingContext(WSGIContext):
         self.liteacc = liteacc
 
     def handle_request(self, env, start_response):
+        account_id = env['REMOTE_USER']
         resp = self._app_call(env)
+        print self._response_headers
         if 'X-Nexe-Cdr-Line' in self._response_headers:
-            rtime, line = self._response_headers['X-Nexe-Cdr-Line'].split(', ', 1)
-            accounting_info = line.split(' ')
-            account_id = env['REMOTE_USER']
-            total = self.liteacc.cache_accounting_info(account_id, rtime, accounting_info)
-            self._response_headers['X-Nexe-Cdr-Total'] = ' '.join(total)
-            self.liteacc.queue.put(account_id)
+            total_time, line = self._response_headers['X-Nexe-Cdr-Line'].split(', ', 1)
+            node_lines = line.split(',')
+            for line in node_lines:
+                rtime, line = line.split(', ', 1)
+                accounting_info = line.split(' ')
+                total = self.liteacc.cache_accounting_info(account_id, rtime, accounting_info)
+                self._response_headers['X-Nexe-Cdr-Total'] = ' '.join(total)
+                self.liteacc.queue.put(account_id)
         start_response(self._response_status, self._response_headers,
                        self._response_exc_info)
         return resp
@@ -201,6 +205,6 @@ def filter_factory(global_conf, **local_conf):
     conf = global_conf.copy()
     conf.update(local_conf)
 
-    def auth_filter(app):
+    def accounting_filter(app):
         return LiteAccounting(app, conf)
-    return auth_filter
+    return accounting_filter
