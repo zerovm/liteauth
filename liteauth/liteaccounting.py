@@ -4,7 +4,7 @@ import time
 from eventlet.green.Queue import Empty
 from swift.common.http import is_success
 from swift.common.middleware.memcache import MemcacheMiddleware
-from swift.common.swob import Request
+from swift.common.swob import Request, HeaderKeyDict
 from swift.common.utils import get_logger
 from swift.common.wsgi import WSGIContext
 try:
@@ -31,19 +31,21 @@ class LiteAccountingContext(WSGIContext):
         self.liteacc = liteacc
 
     def handle_request(self, env, start_response):
+        account_id = env.get('REMOTE_USER', None)
         resp = self._app_call(env)
-        account_id = env.get('REMOTE_USER', 'bad_user')
-        print self._response_headers
-        print env
-        if 'X-Nexe-Cdr-Line' in self._response_headers:
-            total_time, line = self._response_headers['X-Nexe-Cdr-Line'].split(', ', 1)
+        headers = HeaderKeyDict(self._response_headers)
+        if 'x-nexe-cdr-line' in headers and account_id:
+            totals = []
+            total_time, line = headers['x-nexe-cdr-line'].split(', ', 1)
             node_lines = line.split(',')
             for line in node_lines:
                 rtime, line = line.split(', ', 1)
                 accounting_info = line.split(' ')
                 total = self.liteacc.cache_accounting_info(account_id, rtime, accounting_info)
-                self._response_headers['X-Nexe-Cdr-Total'] = ' '.join(total)
+                totals.extend(total)
                 self.liteacc.queue.put(account_id)
+            headers['x-nexe-cdr-total'] = ' '.join(totals)
+            self._response_headers = [(k, v) for k, v in headers.iteritems()]
         start_response(self._response_status, self._response_headers,
                        self._response_exc_info)
         return resp
