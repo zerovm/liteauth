@@ -155,11 +155,11 @@ class LiteAccounting(object):
         total = self.memcache.incr(run_key, delta=1, timeout=self.timeout)
         total_acc.append(total)
         rtime_key = 'liteacc/%s/rtime' % account_id
-        total = self.memcache.incr(rtime_key, delta=int(rtime * 1000), timeout=self.timeout)
+        total = self.memcache.incr(rtime_key, delta=int(float(rtime) * 1000), timeout=self.timeout)
         total_acc.append(total)
         for k, value in zip(CACHE_KEYS, accounting_info):
             key = 'liteacc/%s/%s' % (account_id, k['key'])
-            val = value * k['factor']
+            val = float(value) * k['factor']
             total = self.memcache.incr(key, delta=int(val), timeout=self.timeout)
             total_acc.append(total)
         return total_acc
