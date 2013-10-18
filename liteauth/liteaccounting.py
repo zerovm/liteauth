@@ -35,6 +35,7 @@ CACHE_KEYS = [{'key': 'systime', 'factor': 1000},
               {'key': 'netwrites', 'factor': 1},
               {'key': 'netwrbytes', 'factor': 1}]
 
+
 class LiteAccountingContext(WSGIContext):
     def __init__(self, wsgi_app, logger, liteacc):
         super(LiteAccountingContext, self).__init__(wsgi_app)
@@ -79,14 +80,14 @@ class LiteAccounting(object):
         # Example: /v1/liteacc/accounting
         self.accounting_url = conf.get('liteacc_url', '').lower().rstrip('/')
         self.queue = Queue()
-        # braindead hack to get memcache pointer :)
-        memcache_filter = MemcacheMiddleware(None, conf)
-        self.memcache = memcache_filter.memcache
-        self.logger.info('Got memcache servers: %s' % memcache_filter.memcache_servers)
+        # we will get memcache object later, with first request
+        self.memcache = None
         # let's spawn the accounting thread
         spawn_n(self.accounting_server)
 
     def __call__(self, env, start_response):
+        if 'swift.cache' in env:
+            self.memcache = env['swift.cache']
         context = LiteAccountingContext(self.app, self.logger, self)
         return context.handle_request(env, start_response)
 
@@ -123,6 +124,9 @@ class LiteAccounting(object):
         if not self.accounting_url:
             self.logger.warning('No accounting url, dump cannot complete')
             return
+        if not self.memcache:
+            self.logger.info('No memcache in accounting, waiting...')
+            return
         while len(accounts):
             for acc_id in accounts.keys():
                 if not self.add_semaphore(acc_id):
@@ -133,6 +137,7 @@ class LiteAccounting(object):
                     if sum(totals.values()) > 0:  # sum(totals.values()) == 0 if all executions failed
                         req = Request.blank('%s/%s' % (self.accounting_url, acc_id))
                         req.method = 'GET'
+                        req.environ['swift.cache'] = self.memcache
                         resp = req.get_response(self.app)
                         if is_success(resp.status_int):
                             try:
@@ -149,6 +154,7 @@ class LiteAccounting(object):
                             acc_totals = totals
                         req = Request.blank('%s/%s' % (self.accounting_url, acc_id))
                         req.method = 'PUT'
+                        req.environ['swift.cache'] = self.memcache
                         req.body = json.dumps(acc_totals)
                         resp = req.get_response(self.app)
                         if not is_success(resp.status_int):
@@ -159,6 +165,9 @@ class LiteAccounting(object):
                     self.remove_semaphore(acc_id)
 
     def cache_accounting_info(self, account_id, rtime, accounting_info):
+        if not self.memcache:
+            self.logger.warning('Accounting data cannot be cached, no memcache')
+            return None
         total_acc = []
         run_key = 'liteacc/%s/run' % account_id
         total = self.memcache.incr(run_key, delta=1, time=self.timeout)
@@ -174,6 +183,9 @@ class LiteAccounting(object):
         return total_acc
 
     def retrieve_accounting_info(self, account_id):
+        if not self.memcache:
+            self.logger.warning('Accounting data cannot be cached, no memcache')
+            return None
         total_acc = {}
         run_key = 'liteacc/%s/run' % account_id
         total = int(self.memcache.get(run_key)) or 0
