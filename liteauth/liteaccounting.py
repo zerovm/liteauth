@@ -36,15 +36,14 @@ class LiteAccountingContext(WSGIContext):
         resp = self._app_call(env)
         headers = HeaderKeyDict(self._response_headers)
         if 'x-nexe-cdr-line' in headers and account_id:
-            totals = []
             total_time, line = headers['x-nexe-cdr-line'].split(', ', 1)
             node_lines = re.split(r'\s*,\s*', line)
+            total = []
             for rtime, line in zip(*[iter(node_lines)]*2):
                 accounting_info = line.split(' ')
                 total = self.liteacc.cache_accounting_info(account_id, rtime, accounting_info)
-                totals.extend(total)
                 self.liteacc.queue.put(account_id)
-            headers['x-nexe-cdr-total'] = ' '.join(totals)
+            headers['x-nexe-cdr-total'] = ' '.join([str(t) for t in total])
             self._response_headers = [(k, v) for k, v in headers.iteritems()]
         start_response(self._response_status, self._response_headers,
                        self._response_exc_info)
