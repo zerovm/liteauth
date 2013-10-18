@@ -176,18 +176,18 @@ class LiteAccounting(object):
     def retrieve_accounting_info(self, account_id):
         total_acc = {}
         run_key = 'liteacc/%s/run' % account_id
-        total = self.memcache.get(run_key) or 0
+        total = int(self.memcache.get(run_key)) or 0
         if total:
             self.memcache.decr(run_key, delta=total, timeout=self.timeout)
         total_acc['runs'] = total
         rtime_key = 'liteacc/%s/rtime' % account_id
-        total = self.memcache.get(rtime_key) or 0
+        total = int(self.memcache.get(rtime_key)) or 0
         if total:
             self.memcache.decr(rtime_key, delta=total, timeout=self.timeout)
         total_acc['realtime'] = total
         for k in CACHE_KEYS:
             key = 'liteacc/%s/%s' % (account_id, k['key'])
-            total = self.memcache.get(key) or 0
+            total = int(self.memcache.get(key)) or 0
             if total:
                 self.memcache.decr(key, delta=total, timeout=self.timeout)
             total_acc[k['key']] = total
