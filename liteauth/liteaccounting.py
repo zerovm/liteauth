@@ -31,9 +31,10 @@ class LiteAccountingContext(WSGIContext):
         self.liteacc = liteacc
 
     def handle_request(self, env, start_response):
-        account_id = env['REMOTE_USER']
         resp = self._app_call(env)
+        account_id = env['REMOTE_USER']
         print self._response_headers
+        print account_id
         if 'X-Nexe-Cdr-Line' in self._response_headers:
             total_time, line = self._response_headers['X-Nexe-Cdr-Line'].split(', ', 1)
             node_lines = line.split(',')
