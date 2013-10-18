@@ -128,7 +128,6 @@ class LiteAccounting(object):
             self.logger.warning('No accounting url, dump cannot complete')
             return
         if not self.memcache:
-            self.logger.info('No memcache in accounting, waiting...')
             return
         while len(accounts):
             for acc_id in accounts.keys():
