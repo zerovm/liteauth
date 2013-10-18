@@ -3,14 +3,15 @@ from urllib import quote, unquote
 from time import gmtime, strftime, time
 import datetime
 from swift.common.constraints import MAX_META_VALUE_LENGTH
+from swift.proxy.controllers.base import get_account_info
 
 try:
     import simplejson as json
 except ImportError:
     import json
 
-from swift.common.http import HTTP_CLIENT_CLOSED_REQUEST
-from swift.common.swob import HTTPFound, Response, Request, HTTPUnauthorized, HTTPForbidden, HTTPNotFound, wsgify, HTTPInternalServerError
+from swift.common.http import HTTP_CLIENT_CLOSED_REQUEST, is_success
+from swift.common.swob import HTTPFound, Response, Request, HTTPUnauthorized, HTTPForbidden, HTTPNotFound, wsgify, HTTPInternalServerError, HTTPRequestEntityTooLarge
 from swift.common.utils import cache_from_env, get_logger, TRUE_VALUES, split_path
 from swift.common.middleware.acl import clean_acl
 from oauth import Client
@@ -37,18 +38,23 @@ def retrieve_metadata(app, version, account_id, name, env):
     resp = account_req.get_response(app)
     if resp.status_int >= 300:
         return None
-    i = 0
-    meta = ''
-    key = 'x-account-meta-%s0' % name
-    while key in resp.headers:
-        meta += resp.headers[key]
-        i += 1
-        key = 'x-account-meta-%s%d' % (name, i)
+    meta = assemble_from_partial('x-account-meta-%s' % name, resp.headers)
     try:
         user_data = json.loads(meta)
     except:
         return None
     return user_data
+
+
+def assemble_from_partial(key_name, key_dict):
+    result = ''
+    i = 0
+    key = '%s%s' % (key_name, i)
+    while key in key_dict:
+        result += key_dict[key]
+        i += 1
+        key = '%s%s' % (key_name, i)
+    return result or None
 
 
 def store_metadata(app, version, account_id, name, user_data, env):
@@ -129,6 +135,8 @@ class LiteAuth(object):
         self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
         # if set to 'true' will allow getting whitelist data even for un-authorized clients
         self.whitelist_is_public = conf.get('whitelist_public', 'false').lower() in TRUE_VALUES
+        # url for service objects
+        self.services_url = conf.get('services_url', '').lower().rstrip('/')
 
     def extract_auth_token(self, env):
         auth_token = None
@@ -182,6 +190,7 @@ class LiteAuth(object):
         req.environ['swift.authorize'] = self.authorize
         req.environ['swift.clean_acl'] = clean_acl
         new_cookie = req.environ.get('refresh_cookie', None)
+        _start_response = start_response
         if new_cookie:
             del req.environ['refresh_cookie']
 
@@ -189,8 +198,31 @@ class LiteAuth(object):
                 response_headers.append(('Set-Cookie', new_cookie))
                 return start_response(status, response_headers, exc_info)
 
-            return self.app(env, cookie_resp)
-        return self.app(env, start_response)
+            _start_response = cookie_resp
+        if req.method in ['PUT', 'POST'] and not 'x-zerovm-execute' in req.headers:
+            account_info = get_account_info(req.environ, self.app, swift_source='liteauth')
+            service_plan = assemble_from_partial('serviceplan', account_info['meta'])
+            if service_plan:
+                try:
+                    path_parts = req.split_path(2, 4, rest_with_last=True)
+                except ValueError:
+                    return self.app(env, _start_response)
+                if len(path_parts) == 3:
+                    quota = service_plan['storage']['containers']
+                    new_size = int(account_info['container_count'])
+                    if 0 <= quota < new_size:
+                        return HTTPRequestEntityTooLarge(
+                            body='Over quota: containers')(env, start_response)
+                else:
+                    new_size = int(account_info['bytes']) + (req.content_length or 0)
+                    quota = service_plan['storage']['bytes']
+                    if 0 <= quota < new_size:
+                        return HTTPRequestEntityTooLarge(body='Over quota: bytes')(env, start_response)
+                    quota = service_plan['storage']['objects']
+                    new_size = int(account_info['total_object_count'])
+                    if 0 <= quota < new_size:
+                        return HTTPRequestEntityTooLarge(body='Over quota: objects')(env, start_response)
+        return self.app(env, _start_response)
 
     def do_google_oauth(self, state=None, approval_prompt='auto'):
         c = Client(auth_endpoint='https://accounts.google.com/o/oauth2/auth',
@@ -250,6 +282,12 @@ class LiteAuth(object):
             if not whitelist_id:
                 return Response(request=req, status=402, body='Account not in whitelist')
             if 'new' in whitelist_id:
+                if not store_account_in_whitelist(self.whitelist_url, self.app, email, account_id, req.environ):
+                    return HTTPInternalServerError()
+            elif whitelist_id.startswith('service_'):
+                service = whitelist_id.replace('service_', '', 1)
+                if not self.activate_service(account_id, service, req.environ):
+                    return HTTPInternalServerError()
                 if not store_account_in_whitelist(self.whitelist_url, self.app, email, account_id, req.environ):
                     return HTTPInternalServerError()
         stored_info = retrieve_metadata(self.app, self.version, account_id, 'userdata', req.environ)
@@ -404,6 +442,29 @@ class LiteAuth(object):
                                              req.headers.get('etag', '-'),
                                              req.environ.get('swift.trans_id', '-'), logged_headers or '-',
                                              trans_time)))
+
+    def activate_service(self, account_id, service, env):
+        if not self.services_url:
+            self.logger.warning('No services url found in config, and user requests service %s'
+                                % service)
+            return False
+        req = Request.blank('%s/%s' % (self.services_url, service))
+        req.method = 'GET'
+        req.environ['swift.cache'] = env['swift.cache']
+        resp = req.get_response(self.app)
+        if not is_success(resp.status_int):
+            self.logger.error('Error getting service object: %s %s %s'
+                              % (req.path, resp.status, resp.body))
+            return False
+        try:
+            config = json.loads(resp.body)
+        except Exception:
+            self.logger.error('Error loading service object: %s %s %s'
+                              % (req.path, resp.status, resp.body))
+            return False
+        if not store_metadata(self.app, self.version, account_id, 'serviceplan', config, env):
+            return False
+        return True
 
 
 def filter_factory(global_conf, **local_conf):
