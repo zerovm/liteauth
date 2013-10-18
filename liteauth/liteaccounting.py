@@ -130,7 +130,7 @@ class LiteAccounting(object):
                     continue
                 try:
                     totals = self.retrieve_accounting_info(acc_id)
-                    if sum(totals) > 0:  # sum(totals) == 0 if all executions failed, no need to add it
+                    if sum(totals.values()) > 0:  # sum(totals.values()) == 0 if all executions failed
                         req = Request.blank('%s/%s' % (self.accounting_url, acc_id))
                         req.method = 'GET'
                         resp = req.get_response(self.app)
