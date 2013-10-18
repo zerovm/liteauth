@@ -161,15 +161,15 @@ class LiteAccounting(object):
     def cache_accounting_info(self, account_id, rtime, accounting_info):
         total_acc = []
         run_key = 'liteacc/%s/run' % account_id
-        total = self.memcache.incr(run_key, delta=1, timeout=self.timeout)
+        total = self.memcache.incr(run_key, delta=1, time=self.timeout)
         total_acc.append(total)
         rtime_key = 'liteacc/%s/rtime' % account_id
-        total = self.memcache.incr(rtime_key, delta=int(float(rtime) * 1000), timeout=self.timeout)
+        total = self.memcache.incr(rtime_key, delta=int(float(rtime) * 1000), time=self.timeout)
         total_acc.append(total)
         for k, value in zip(CACHE_KEYS, accounting_info):
             key = 'liteacc/%s/%s' % (account_id, k['key'])
             val = float(value) * k['factor']
-            total = self.memcache.incr(key, delta=int(val), timeout=self.timeout)
+            total = self.memcache.incr(key, delta=int(val), time=self.timeout)
             total_acc.append(total)
         return total_acc
 
@@ -178,25 +178,25 @@ class LiteAccounting(object):
         run_key = 'liteacc/%s/run' % account_id
         total = int(self.memcache.get(run_key)) or 0
         if total:
-            self.memcache.decr(run_key, delta=total, timeout=self.timeout)
+            self.memcache.decr(run_key, delta=total, time=self.timeout)
         total_acc['runs'] = total
         rtime_key = 'liteacc/%s/rtime' % account_id
         total = int(self.memcache.get(rtime_key)) or 0
         if total:
-            self.memcache.decr(rtime_key, delta=total, timeout=self.timeout)
+            self.memcache.decr(rtime_key, delta=total, time=self.timeout)
         total_acc['realtime'] = total
         for k in CACHE_KEYS:
             key = 'liteacc/%s/%s' % (account_id, k['key'])
             total = int(self.memcache.get(key)) or 0
             if total:
-                self.memcache.decr(key, delta=total, timeout=self.timeout)
+                self.memcache.decr(key, delta=total, time=self.timeout)
             total_acc[k['key']] = total
         return total_acc
 
     def add_semaphore(self, account_id):
         sem_key = 'liteacc_sem/%s' % account_id
         try:
-            value = self.memcache.incr(sem_key, delta=1, timeout=self.timeout)
+            value = self.memcache.incr(sem_key, delta=1, time=self.timeout)
             if value > 1:
                 self.remove_semaphore(account_id)
                 return False
@@ -207,7 +207,7 @@ class LiteAccounting(object):
     def remove_semaphore(self, account_id):
         sem_key = 'liteacc_sem/%s' % account_id
         try:
-            self.memcache.decr(sem_key, delta=1, timeout=self.timeout)
+            self.memcache.decr(sem_key, delta=1, time=self.timeout)
         except Exception:
             pass
 
