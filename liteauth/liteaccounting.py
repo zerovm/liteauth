@@ -13,17 +13,6 @@ try:
 except ImportError:
     import json
 
-# CACHE_KEYS = [{'key': 'systime', 'factor': 1000},
-#               {'key': 'usertime', 'factor': 1000},
-#               {'key': 'dskreads', 'factor': (1.0 / 1000 / 1000)},
-#               {'key': 'dskrdbytes', 'factor': (1.0 / 1024 / 1024)},
-#               {'key': 'dskwrites', 'factor': (1.0 / 1000 / 1000)},
-#               {'key': 'dskwrbytes', 'factor': (1.0 / 1024 / 1024)},
-#               {'key': 'netreads', 'factor': (1.0 / 1000 / 1000)},
-#               {'key': 'netrdbytes', 'factor': (1.0 / 1024 / 1024)},
-#               {'key': 'netwrites', 'factor': (1.0 / 1000 / 1000)},
-#               {'key': 'netwrbytes', 'factor': (1.0 / 1024 / 1024)}]
-
 CACHE_KEYS = [{'key': 'systime', 'factor': 1000},
               {'key': 'usertime', 'factor': 1000},
               {'key': 'dskreads', 'factor': 1},
@@ -34,6 +23,8 @@ CACHE_KEYS = [{'key': 'systime', 'factor': 1000},
               {'key': 'netrdbytes', 'factor': 1},
               {'key': 'netwrites', 'factor': 1},
               {'key': 'netwrbytes', 'factor': 1}]
+RTIME_KEY = {'key': 'rtime', 'factor': 1000}
+RUN_KEY = {'key': 'run', 'factor': 1}
 
 
 class LiteAccountingContext(WSGIContext):
@@ -171,11 +162,12 @@ class LiteAccounting(object):
             self.logger.warning('Accounting data cannot be cached, no memcache')
             return None
         total_acc = []
-        run_key = 'liteacc/%s/run' % account_id
-        total = self.memcache.incr(run_key, delta=1, time=self.timeout)
+        run_key = 'liteacc/%s/%s' % (account_id, RUN_KEY['key'])
+        total = self.memcache.incr(run_key, delta=int(1 * RUN_KEY['factor']), time=self.timeout)
         total_acc.append(total)
-        rtime_key = 'liteacc/%s/rtime' % account_id
-        total = self.memcache.incr(rtime_key, delta=int(float(rtime) * 1000), time=self.timeout)
+        rtime_key = 'liteacc/%s/%s' % (account_id, RTIME_KEY['key'])
+        val = float(rtime) * RTIME_KEY['factor']
+        total = self.memcache.incr(rtime_key, delta=int(val), time=self.timeout)
         total_acc.append(total)
         for k, value in zip(CACHE_KEYS, accounting_info):
             key = 'liteacc/%s/%s' % (account_id, k['key'])
@@ -189,12 +181,12 @@ class LiteAccounting(object):
             self.logger.warning('Accounting data cannot be cached, no memcache')
             return None
         total_acc = {}
-        run_key = 'liteacc/%s/run' % account_id
+        run_key = 'liteacc/%s/%s' % (account_id, RUN_KEY['key'])
         total = int(self.memcache.get(run_key)) or 0
         if total:
             self.memcache.decr(run_key, delta=total, time=self.timeout)
         total_acc['runs'] = total
-        rtime_key = 'liteacc/%s/rtime' % account_id
+        rtime_key = 'liteacc/%s/%s' % (account_id, RTIME_KEY['key'])
         total = int(self.memcache.get(rtime_key)) or 0
         if total:
             self.memcache.decr(rtime_key, delta=total, time=self.timeout)

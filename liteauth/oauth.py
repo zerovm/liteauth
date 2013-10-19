@@ -6,6 +6,7 @@ from urllib import urlencode
 from eventlet.green.urllib2 import urlopen, HTTPError
 from eventlet.green.httplib import HTTPMessage
 
+
 def get_charset(self):
     try:
         data = filter(lambda s: 'Content-Type' in s, self.headers)[0]
@@ -17,6 +18,7 @@ def get_charset(self):
 
     return 'utf-8'
 HTTPMessage.get_content_charset = get_charset
+
 
 class Client(object):
     """ OAuth 2.0 client object
@@ -42,7 +44,7 @@ class Client(object):
         kwargs.update({
             'client_id': self.client_id,
             'response_type': 'code',
-            })
+        })
 
         if scope is not None:
             kwargs['scope'] = scope_delim.join(scope)
@@ -83,8 +85,9 @@ class Client(object):
         kwargs.update({
             'client_id': self.client_id,
             'client_secret': self.client_secret,
-            'grant_type': 'grant_type' in kwargs and kwargs['grant_type'] or\
-                          'authorization_code'
+            'grant_type': 'grant_type' in kwargs
+                          and kwargs['grant_type']
+                          or 'authorization_code'
         })
         if self.redirect_uri is not None:
             kwargs.update({'redirect_uri': self.redirect_uri})
@@ -128,5 +131,6 @@ class Client(object):
             msg = urlopen(path, data)
         except HTTPError:
             return None
-        return parser(msg.read().decode(msg.info().get_content_charset()
-        or 'utf-8'))
+        return parser(msg.read().decode(
+            msg.info().get_content_charset() or 'utf-8'
+        ))

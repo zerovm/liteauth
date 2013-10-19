@@ -138,14 +138,6 @@ class LiteAuth(object):
         # url for service objects
         self.services_url = conf.get('services_url', '').lower().rstrip('/')
 
-    def extract_auth_token(self, env):
-        auth_token = None
-        try:
-            auth_token = SimpleCookie(env.get('HTTP_COOKIE', ''))['session'].value
-        except KeyError:
-            pass
-        return auth_token
-
     def is_whitelist_request(self, req):
         if self.whitelist_url \
                 and req.path.startswith(self.whitelist_url) \
@@ -175,7 +167,7 @@ class LiteAuth(object):
                         return self.do_google_login(
                             req, code, state)(env, start_response)
             return self.do_google_oauth(state)(env, start_response)
-        token = self.extract_auth_token(req.environ)
+        token = extract_auth_token(req.environ)
         if token:
             req.headers['x-auth-token'] = token
             req.headers['x-storage-token'] = token
@@ -204,6 +196,7 @@ class LiteAuth(object):
             service_plan = assemble_from_partial('serviceplan', account_info['meta'])
             if service_plan:
                 try:
+                    service_plan = json.loads(service_plan)
                     path_parts = req.split_path(2, 4, rest_with_last=True)
                 except ValueError:
                     return self.app(env, _start_response)
@@ -240,7 +233,7 @@ class LiteAuth(object):
             req.environ['eventlet.posthooks'].append(
                 (self.posthooklogger, (req,), {}))
         if 'logout' in code:
-            auth_token = self.extract_auth_token(req.environ)
+            auth_token = extract_auth_token(req.environ)
             if auth_token:
                 self.del_cached_account_id(req.environ, auth_token)
             cookie = self.create_session_cookie()
@@ -465,6 +458,15 @@ class LiteAuth(object):
         if not store_metadata(self.app, self.version, account_id, 'serviceplan', config, env):
             return False
         return True
+
+
+def extract_auth_token(env):
+    auth_token = None
+    try:
+        auth_token = SimpleCookie(env.get('HTTP_COOKIE', ''))['session'].value
+    except KeyError:
+        pass
+    return auth_token
 
 
 def filter_factory(global_conf, **local_conf):
