@@ -106,7 +106,7 @@ class LiteAccounting(object):
                     start = time.time()
                     continue
                 if not account_id:
-                    sleep(self.interval / 100)
+                    sleep(self.interval / 100.0)
             except Exception:
                 self.logger.exception('Exception occurred when dumping accounting data')
                 sleep(self.interval)
