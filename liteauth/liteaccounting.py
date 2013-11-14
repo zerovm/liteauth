@@ -91,11 +91,11 @@ class LiteAccounting(object):
         start = time.time()
         while True:
             try:
+                account_id = None
                 try:
                     account_id = self.queue.get(block=False)
                     accounts[account_id] = True
                 except Empty:
-                    account_id = None
                     pass
                 if (time.time() - start) > self.interval:
                     try:
