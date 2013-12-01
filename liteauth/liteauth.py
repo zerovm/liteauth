@@ -2,6 +2,7 @@ from Cookie import SimpleCookie
 from urllib import quote, unquote
 from time import gmtime, strftime, time
 import datetime
+from hashlib import md5
 from swift.common.constraints import MAX_META_VALUE_LENGTH
 from swift.proxy.controllers.base import get_account_info
 
@@ -288,6 +289,17 @@ class LiteAuth(object):
             if not hasattr(c, 'refresh_token'):
                 return self.do_google_oauth(state=state, approval_prompt='force')
             user_info['rtoken'] = c.refresh_token
+            if not store_metadata(self.app, self.version, account_id, 'userdata', user_info, req.environ):
+                req.response = HTTPInternalServerError()
+                return req.response
+        rtoken = stored_info.pop('rtoken')
+        stored_hash = stored_info.pop('hash__', None)
+        user_hash = md5(json.dumps(sorted(user_info.items()))).hexdigest()
+        if user_hash != stored_hash:
+            # user changed profile data
+            # we need to update our stored userinfo
+            user_info['rtoken'] = rtoken
+            user_info['hash__'] = user_hash
             if not store_metadata(self.app, self.version, account_id, 'userdata', user_info, req.environ):
                 req.response = HTTPInternalServerError()
                 return req.response
