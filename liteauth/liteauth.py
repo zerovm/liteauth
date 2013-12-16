@@ -289,20 +289,22 @@ class LiteAuth(object):
             if not hasattr(c, 'refresh_token'):
                 return self.do_google_oauth(state=state, approval_prompt='force')
             user_info['rtoken'] = c.refresh_token
+            user_info['hash__'] = md5(json.dumps(sorted(user_info.items()))).hexdigest()
             if not store_metadata(self.app, self.version, account_id, 'userdata', user_info, req.environ):
                 req.response = HTTPInternalServerError()
                 return req.response
-        rtoken = stored_info.pop('rtoken')
-        stored_hash = stored_info.pop('hash__', None)
-        user_hash = md5(json.dumps(sorted(user_info.items()))).hexdigest()
-        if user_hash != stored_hash:
-            # user changed profile data
-            # we need to update our stored userinfo
-            user_info['rtoken'] = rtoken
-            user_info['hash__'] = user_hash
-            if not store_metadata(self.app, self.version, account_id, 'userdata', user_info, req.environ):
-                req.response = HTTPInternalServerError()
-                return req.response
+        else:
+            rtoken = stored_info.pop('rtoken')
+            stored_hash = stored_info.pop('hash__', None)
+            user_hash = md5(json.dumps(sorted(user_info.items()))).hexdigest()
+            if user_hash != stored_hash:
+                # user changed profile data
+                # we need to update our stored userinfo
+                user_info['rtoken'] = rtoken
+                user_info['hash__'] = user_hash
+                if not store_metadata(self.app, self.version, account_id, 'userdata', user_info, req.environ):
+                    req.response = HTTPInternalServerError()
+                    return req.response
         cookie = self.create_session_cookie(token=token, expires_in=c.expires_in)
         resp = Response(request=req, status=302,
                         headers={
