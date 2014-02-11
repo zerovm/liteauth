@@ -1,35 +1,19 @@
 from Cookie import SimpleCookie
-from urllib import quote, unquote
-from time import gmtime, strftime, time
+from urllib import quote
+from time import time
 import datetime
 from hashlib import md5
 from swift.common.constraints import MAX_META_VALUE_LENGTH
-from swift.proxy.controllers.base import get_account_info
 
 try:
     import simplejson as json
 except ImportError:
     import json
 
-from swift.common.http import HTTP_CLIENT_CLOSED_REQUEST, is_success
-from swift.common.swob import HTTPFound, Response, Request, HTTPUnauthorized, HTTPForbidden, HTTPNotFound, wsgify, HTTPInternalServerError, HTTPRequestEntityTooLarge
-from swift.common.utils import cache_from_env, get_logger, TRUE_VALUES, split_path
-from swift.common.middleware.acl import clean_acl
+from swift.common.swob import HTTPFound, Response, Request, HTTPUnauthorized, \
+    HTTPForbidden, HTTPInternalServerError
+from swift.common.utils import cache_from_env, get_logger, TRUE_VALUES
 from oauth import Client
-
-
-def parse_lite_acl(acl_string):
-    """
-    Parses Litestack ACL string into an account list.
-
-    :param acl_string: The standard Swift ACL string to parse.
-    :returns: list of user accounts
-    """
-    accounts = []
-    if acl_string:
-        for value in acl_string.split(','):
-            accounts.append(value)
-    return accounts
 
 
 def retrieve_metadata(app, version, account_id, name, env):
@@ -98,10 +82,40 @@ def store_account_in_whitelist(whitelist_url, app, email, account_id, env):
     req.headers['content-type'] = 'text/plain'
     req.body = str(account_id)
     req.environ['swift.cache'] = env['swift.cache']
+    req.environ['liteauth.new_service'] = \
+        env.get('liteauth.new_service', None)
     resp = req.get_response(app)
     if resp.status_int >= 300:
         return False
     return True
+
+
+class LiteAuthStorage(object):
+    def __init__(self, env):
+        self.cache = cache_from_env(env)
+        if not self.cache:
+            raise Exception('Memcache required')
+
+    def get_id(self, token):
+        account_id = None
+        expires = None
+        memcache_token_key = 'l_token/%s' % token
+        data = self.cache.get(memcache_token_key)
+        if data:
+            expires, account_id = data
+        print ['get', memcache_token_key, account_id, expires]
+        return account_id, expires
+
+    def del_id(self, token):
+        memcache_token_key = 'l_token/%s' % token
+        self.cache.delete(memcache_token_key)
+
+    def store_id(self, account_id, token, expires_in):
+        expires = time() + expires_in
+        memcache_token_key = 'l_token/%s' % str(token)
+        print ['set', memcache_token_key, str(account_id), expires]
+        self.cache.set(memcache_token_key, (expires, account_id),
+                       time=float(expires - time()))
 
 
 class LiteAuth(object):
@@ -127,95 +141,37 @@ class LiteAuth(object):
         self.google_prefix = 'g_'
         self.logger = get_logger(conf, log_route='lite-auth')
         self.log_headers = conf.get('log_headers', 'false').lower() in TRUE_VALUES
-        self.system_accounts = conf.get('system_accounts', '').split()
         # try to refresh token
         # when less than this amount of seconds left
         self.refresh_before = conf.get('token_refresh_before', 60 * 29)
         # url for whitelist objects
         # Example: /v1/liteauth/whitelist
         self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
-        # if set to 'true' will allow getting whitelist data even for un-authorized clients
-        self.whitelist_is_public = conf.get('whitelist_public', 'false').lower() in TRUE_VALUES
-        # url for service objects
-        self.services_url = conf.get('services_url', '').lower().rstrip('/')
-
-    def is_whitelist_request(self, req):
-        if self.whitelist_url \
-                and req.path.startswith(self.whitelist_url) \
-                and req.method in ['GET', 'HEAD']:
-            return True
-        return False
+        self.storage_driver = None
 
     def __call__(self, env, start_response):
         req = Request(env)
-        if self.whitelist_is_public and self.is_whitelist_request(req):
-            return self.app(env, start_response)
+        self.storage_driver = LiteAuthStorage(env)
         if req.path.startswith(self.google_auth):
             state = None
             if req.params:
                 code = req.params.get('code')
                 state = req.params.get('state')
                 if code:
-                    if not 'eventlet.posthooks' in req.environ:
-                        req.bytes_transferred = '-'
-                        req.client_disconnect = False
-                        req.start_time = time()
-                        response = self.do_google_login(req, code, state)
-                        req.response = response
-                        self.posthooklogger(req.environ, req)
-                        return response(env, start_response)
-                    else:
-                        return self.do_google_login(
-                            req, code, state)(env, start_response)
+                    return self.do_google_login(req, code, state)(env, start_response)
             return self.do_google_oauth(state)(env, start_response)
-        token = extract_auth_token(req.environ)
-        if token:
-            req.headers['x-auth-token'] = token
-            req.headers['x-storage-token'] = token
-            account_id = self.get_cached_account_id(req.environ, token)
-            if not account_id:
-                return HTTPUnauthorized()(env, start_response)
-            req.environ['REMOTE_USER'] = account_id
-            req.headers['x-auth-token'] = '%s,%s' % (account_id, token)
-            if self.is_whitelist_request(req):
-                self.logger.info('Whitelist request: %s' % req.path)
-                return self.app(env, start_response)
-        req.environ['swift.authorize'] = self.authorize
-        req.environ['swift.clean_acl'] = clean_acl
-        new_cookie = req.environ.get('refresh_cookie', None)
+        token = req.headers.get('x-auth-token')
         _start_response = start_response
-        if new_cookie:
-            del req.environ['refresh_cookie']
+        if token:
+            account_id, expires = self.storage_driver.get_id(token)
+            if account_id and expires:
+                new_cookie = self.refresh_token(env, account_id, expires)
+                if new_cookie:
 
-            def cookie_resp(status, response_headers, exc_info=None):
-                response_headers.append(('Set-Cookie', new_cookie))
-                return start_response(status, response_headers, exc_info)
-
-            _start_response = cookie_resp
-        if req.method in ['PUT', 'POST'] and not 'x-zerovm-execute' in req.headers:
-            account_info = get_account_info(req.environ, self.app, swift_source='liteauth')
-            service_plan = assemble_from_partial('serviceplan', account_info['meta'])
-            if service_plan:
-                try:
-                    service_plan = json.loads(service_plan)
-                    path_parts = req.split_path(2, 4, rest_with_last=True)
-                except ValueError:
-                    return self.app(env, _start_response)
-                if len(path_parts) == 3:
-                    quota = service_plan['storage']['containers']
-                    new_size = int(account_info['container_count'])
-                    if 0 <= quota < new_size:
-                        return HTTPRequestEntityTooLarge(
-                            body='Over quota: containers')(env, start_response)
-                else:
-                    new_size = int(account_info['bytes']) + (req.content_length or 0)
-                    quota = service_plan['storage']['bytes']
-                    if 0 <= quota < new_size:
-                        return HTTPRequestEntityTooLarge(body='Over quota: bytes')(env, start_response)
-                    quota = service_plan['storage']['objects']
-                    new_size = int(account_info['total_object_count'])
-                    if 0 <= quota < new_size:
-                        return HTTPRequestEntityTooLarge(body='Over quota: objects')(env, start_response)
+                    def cookie_resp(status, response_headers, exc_info=None):
+                        response_headers.append(('Set-Cookie', new_cookie))
+                        return start_response(status, response_headers, exc_info)
+                    _start_response = cookie_resp
         return self.app(env, _start_response)
 
     def do_google_oauth(self, state=None, approval_prompt='auto'):
@@ -227,16 +183,7 @@ class LiteAuth(object):
         return HTTPFound(location=loc)
 
     def do_google_login(self, req, code, state=None):
-        if 'eventlet.posthooks' in req.environ:
-            req.bytes_transferred = '-'
-            req.client_disconnect = False
-            req.start_time = time()
-            req.environ['eventlet.posthooks'].append(
-                (self.posthooklogger, (req,), {}))
         if 'logout' in code:
-            auth_token = extract_auth_token(req.environ)
-            if auth_token:
-                self.del_cached_account_id(req.environ, auth_token)
             cookie = self.create_session_cookie()
             resp = Response(request=req, status=302,
                             headers={
@@ -271,19 +218,24 @@ class LiteAuth(object):
             email = user_info.get('email', None)
             if not email:
                 return HTTPForbidden()
-            whitelist_id = get_account_from_whitelist(self.whitelist_url, self.app, email, self.logger, req.environ)
-            self.logger.info('Whitelist is %s for user: %s' % (whitelist_id, json.dumps(user_info)))
+            whitelist_id = get_account_from_whitelist(
+                self.whitelist_url, self.app, email, self.logger, req.environ)
+            self.logger.info('Whitelist is %s for user: %s' % (whitelist_id, email))
             if not whitelist_id:
-                return Response(request=req, status=402, body='Account not in whitelist')
-            if 'new' in whitelist_id:
-                if not store_account_in_whitelist(self.whitelist_url, self.app, email, account_id, req.environ):
-                    return HTTPInternalServerError()
-            elif whitelist_id.startswith('service_'):
-                service = whitelist_id.replace('service_', '', 1)
-                if not self.activate_service(account_id, service, req.environ):
-                    return HTTPInternalServerError()
-                if not store_account_in_whitelist(self.whitelist_url, self.app, email, account_id, req.environ):
-                    return HTTPInternalServerError()
+                return Response(request=req, status=402,
+                                body='Account not in whitelist')
+            if whitelist_id.startswith('service_'):
+                req.environ['liteauth.new_service'] = \
+                    whitelist_id.replace('service_', '', 1)
+                if not store_account_in_whitelist(self.whitelist_url,
+                                                  self.app, email, account_id,
+                                                  req.environ):
+                        return HTTPInternalServerError()
+            elif whitelist_id.startswith(self.google_prefix):
+                pass
+            else:
+                self.logger.warning('Whitelist for user %s contains wrong data: %s' % (email, whitelist_id))
+                return HTTPInternalServerError()
         stored_info = retrieve_metadata(self.app, self.version, account_id, 'userdata', req.environ)
         if not stored_info:
             if not hasattr(c, 'refresh_token'):
@@ -327,37 +279,14 @@ class LiteAuth(object):
         cookie['session']['expires'] = expiration.strftime('%a, %d %b %Y %H:%M:%S GMT')
         return cookie['session'].output(header='').strip()
 
-    def del_cached_account_id(self, env, token):
-        memcache_client = cache_from_env(env)
-        if not memcache_client:
-            raise Exception('Memcache required')
-        memcache_token_key = '%s/token/%s' % (self.google_prefix, token)
-        memcache_client.delete(memcache_token_key)
-
-    def cache_account_id(self, env, account_id, token, expires_in):
-        expires = time() + expires_in
-        memcache_client = cache_from_env(env)
-        memcache_token_key = '%s/token/%s' \
-                             % (self.google_prefix, token)
-        memcache_client.set(memcache_token_key, (expires, account_id),
-                            time=float(expires - time()))
-
-    def get_cached_account_id(self, env, token):
-        account_id = None
-        memcache_client = cache_from_env(env)
-        if not memcache_client:
-            raise Exception('Memcache required')
-        memcache_token_key = '%s/token/%s' % (self.google_prefix, token)
-        cached_auth_data = memcache_client.get(memcache_token_key)
-        if cached_auth_data:
-            expires, account_id = cached_auth_data
-            if expires - time() < self.refresh_before:
+    def refresh_token(self, env, account_id, expires):
+        if expires - time() < self.refresh_before:
                 user_data = retrieve_metadata(self.app, self.version, account_id, 'userdata', env)
                 if not user_data:
-                    return self.do_google_oauth(state=None, approval_prompt='force')
+                    return None
                 rtoken = user_data.get('rtoken', None)
                 if not rtoken:
-                    return self.do_google_oauth(state=None, approval_prompt='force')
+                    return None
                 client = Client(token_endpoint='https://accounts.google.com/o/oauth2/token',
                                 resource_endpoint='https://www.googleapis.com/oauth2/v1',
                                 client_id=self.google_client_id,
@@ -368,10 +297,10 @@ class LiteAuth(object):
                     self.logger.info('%s' % str(error))
                 cookie = self.create_session_cookie(token=client.access_token,
                                                     expires_in=client.expires_in)
-                env['refresh_cookie'] = cookie
-                self.cache_account_id(env, account_id,
-                                      client.access_token, client.expires_in)
-        return account_id
+                self.storage_driver.store_id(account_id,
+                                             client.access_token, client.expires_in)
+                return cookie
+        return None
 
     def get_account_id(self, user_info):
         account_id = self.google_prefix + user_info.get('id')
@@ -381,106 +310,9 @@ class LiteAuth(object):
         user_info = client.request('/userinfo')
         if user_info:
             account_id = self.get_account_id(user_info)
-            self.cache_account_id(env, account_id, client.access_token, client.expires_in)
+            self.storage_driver.store_id(account_id,
+                                         client.access_token, client.expires_in)
         return user_info
-
-    def authorize(self, req):
-        try:
-            version, account, container, obj = split_path(req.path, 1, 4, True)
-        except ValueError:
-            self.logger.increment('errors')
-            return HTTPNotFound(request=req)
-        if not account:
-            return self.denied_response(req)
-        user_data = (req.remote_user or '')
-        if req.method in 'POST' and 'x-zerovm-execute' in req.headers \
-                and account in user_data:
-            return None
-        if account in user_data and \
-                (req.method not in ('DELETE', 'PUT', 'POST') or container):
-            req.environ['swift_owner'] = True
-            return None
-        if container:
-            accounts = parse_lite_acl(getattr(req, 'acl', None))
-            if '*' in accounts or user_data in accounts:
-                return None
-        return self.denied_response(req)
-
-    def denied_response(self, req):
-        if req.remote_user:
-            self.logger.increment('forbidden')
-            return HTTPForbidden(request=req)
-        else:
-            self.logger.increment('unauthorized')
-            return HTTPUnauthorized(request=req)
-
-    def posthooklogger(self, env, req):
-        if not req.path.startswith(self.google_auth):
-            return
-        response = getattr(req, 'response', None)
-        if not response:
-            return
-        trans_time = '%.4f' % (time() - req.start_time)
-        the_request = quote(unquote(req.path))
-        if req.query_string:
-            the_request = the_request + '?' + req.query_string
-            # remote user for zeus
-        client = req.headers.get('x-cluster-client-ip')
-        if not client and 'x-forwarded-for' in req.headers:
-            # remote user for other lbs
-            client = req.headers['x-forwarded-for'].split(',')[0].strip()
-        logged_headers = None
-        if self.log_headers:
-            logged_headers = '\n'.join('%s: %s' % (k, v)
-                                       for k, v in req.headers.items())
-        status_int = response.status_int
-        if getattr(req, 'client_disconnect', False) or \
-                getattr(response, 'client_disconnect', False):
-            status_int = HTTP_CLIENT_CLOSED_REQUEST
-        self.logger.info(
-            ' '.join(quote(str(x)) for x in (client or '-',
-                                             req.remote_addr or '-', strftime('%d/%b/%Y/%H/%M/%S', gmtime()),
-                                             req.method, the_request, req.environ['SERVER_PROTOCOL'],
-                                             status_int, req.referer or '-', req.user_agent or '-',
-                                             req.headers.get('x-auth-token',
-                                                             req.headers.get('x-auth-admin-user', '-')),
-                                             getattr(req, 'bytes_transferred', 0) or '-',
-                                             getattr(response, 'bytes_transferred', 0) or '-',
-                                             req.headers.get('etag', '-'),
-                                             req.environ.get('swift.trans_id', '-'), logged_headers or '-',
-                                             trans_time)))
-
-    def activate_service(self, account_id, service, env):
-        if not self.services_url:
-            self.logger.warning('No services url found in config, and user requests service %s'
-                                % service)
-            return False
-        req = Request.blank('%s/%s' % (self.services_url, service))
-        req.method = 'GET'
-        req.environ['swift.cache'] = env['swift.cache']
-        resp = req.get_response(self.app)
-        if not is_success(resp.status_int):
-            self.logger.error('Error getting service object: %s %s %s'
-                              % (req.path, resp.status, resp.body))
-            return False
-        try:
-            config = json.loads(resp.body)
-        except Exception:
-            self.logger.error('Error loading service object: %s %s %s'
-                              % (req.path, resp.status, resp.body))
-            return False
-        if not store_metadata(self.app, self.version, account_id, 'serviceplan', config, env):
-            return False
-        return True
-
-
-def extract_auth_token(env):
-    auth_token = None
-    try:
-        auth_token = SimpleCookie(env.get('HTTP_COOKIE', ''))['session'].value
-    except KeyError:
-        pass
-    return auth_token
 
 
 def filter_factory(global_conf, **local_conf):
