@@ -39,19 +39,20 @@ class LiteAuthToken(object):
         self.app = app
         self.conf = conf
         self.logger = get_logger(conf, log_route='lite-auth')
+        self.storage_driver = conf.get('storage_driver', LiteAuthStorage)
+        provider = conf.get('oauth_provider', 'google_oauth')
+        mod = __import__('providers.' + provider, fromlist=['Client'])
+        self.provider = getattr(mod, 'Client')
+        self.prefix = self.provider.PREFIX
 
     def __call__(self, env, start_response):
         req = Request(env)
-        storage_driver = LiteAuthStorage(env)
         token = extract_auth_token(req)
         if token:
-            account_id, _junk = storage_driver.get_id(token)
-            # if not account_id:
-            #     return HTTPUnauthorized()(env, start_response)
-            req.environ['REMOTE_USER'] = account_id
-            # req.headers['x-auth-token'] = '%s,%s' % (account_id, token)
-            print [account_id, token]
-            print req.headers
+            account_id, _junk = \
+                self.storage_driver(env, self.prefix).get_id(token)
+            if account_id:
+                req.environ['REMOTE_USER'] = account_id
         req.environ['swift.authorize'] = self.authorize
         req.environ['swift.clean_acl'] = clean_acl
         return self.app(env, start_response)

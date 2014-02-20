@@ -20,11 +20,12 @@ setup(
     scripts=[],
     entry_points={
         'paste.filter_factory': [
-		'liteauth=liteauth.liteauth:filter_factory',
-		'liteauth_token=liteauth.liteauth_token:filter_factory',
-		'litequota=liteauth.litequota:filter_factory',
-		'litebilling=liteauth.litebilling:filter_factory',
-        'liteaccounting=liteauth.liteaccounting:filter_factory',
+            'liteauth=liteauth.liteauth:filter_factory',
+            'liteauth_token=liteauth.liteauth_token:filter_factory',
+            'litequota=liteauth.litequota:filter_factory',
+            'litebilling=liteauth.litebilling:filter_factory',
+            'liteaccounting=liteauth.liteaccounting:filter_factory',
+            'liteswauth=liteauth.swauth_manager:filter_factory',
         ],
     },
 )
