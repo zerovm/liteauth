@@ -11,10 +11,13 @@ class OauthLogin(object):
         self.app = app
         self.conf = conf
         self.logger = get_logger(conf, log_route='liteauth')
-        provider = conf.get('oauth_provider', 'google_oauth')
-        mod = __import__('providers.' + provider, fromlist=['Client'])
-        self.provider = getattr(mod, 'Client')
-        self.prefix = self.provider.PREFIX
+        try:
+            provider = conf.get('oauth_provider', 'google_oauth')
+            mod = __import__('providers.' + provider, fromlist=['Client'])
+            self.provider = getattr(mod, 'Client')
+            self.prefix = self.provider.PREFIX
+        except Exception:
+            raise ValueError('oauth_provider is invalid in config file')
         self.service_endpoint = conf.get('service_endpoint', '')
         if not self.service_endpoint:
             raise ValueError('service_endpoint not set in config file')

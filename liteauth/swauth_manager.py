@@ -75,15 +75,22 @@ class SwauthManager(object):
 
     @wsgify
     def __call__(self, req):
+        if not self.super_admin_key:  # profile management is disabled
+            return self.denied_response(req)
         try:
             (endpoint, _rest) = req.split_path(1, 2, True)
         except ValueError:
-            return self.app
+            return self.denied_response(req)
         if endpoint == self.profile_path:
             account_id = req.environ.get('REMOTE_USER', '')
             if not account_id:
                 return HTTPUnauthorized(request=req)
             user_id, user_email = account_id.split(':')
+            whitelist_id = get_data_from_url(self.whitelist_url,
+                                             self.app,
+                                             user_email,
+                                             self.logger,
+                                             req.environ)
             invite_code = req.headers.get('x-auth-invite-code', None)
             if invite_code and req.method == 'PUT':
                 invite_id = get_data_from_url(self.invite_url,
@@ -93,24 +100,25 @@ class SwauthManager(object):
                                               req.environ)
                 if not invite_id:
                     return self.denied_response(req)
+                service = None
                 if not invite_id.startswith('email:'):
                     if not store_data_in_url(self.invite_url,
                                              self.app,
                                              invite_code,
-                                             'email:%s' % user_email,
+                                             'email:%s:%s' % (user_email, invite_id),
                                              req.environ):
                         return HTTPInternalServerError(request=req)
+                    service = invite_id
+                elif 'email:%s:' % user_email in invite_id:
+                    service = invite_id.split(':', 3)[2]
+                if service and not whitelist_id:
                     if not store_data_in_url(self.whitelist_url,
                                              self.app,
                                              user_email,
-                                             invite_id,
+                                             service,
                                              req.environ):
                         return HTTPInternalServerError(request=req)
-            whitelist_id = get_data_from_url(self.whitelist_url,
-                                             self.app,
-                                             user_email,
-                                             self.logger,
-                                             req.environ)
+                    whitelist_id = service
             if not whitelist_id:
                 return Response(request=req, status=402,
                                 body='Account not in whitelist')
