@@ -3,7 +3,9 @@ from urllib import quote
 from time import time
 import datetime
 from hashlib import md5
+
 from swift.common.constraints import MAX_META_VALUE_LENGTH
+
 
 try:
     import simplejson as json
@@ -13,7 +15,6 @@ except ImportError:
 from swift.common.swob import HTTPFound, Response, Request, HTTPUnauthorized, \
     HTTPForbidden, HTTPInternalServerError
 from swift.common.utils import cache_from_env, get_logger, TRUE_VALUES
-from oauth import Client
 
 
 def retrieve_metadata(app, version, account_id, name, env):
@@ -91,15 +92,16 @@ def store_account_in_whitelist(whitelist_url, app, email, account_id, env):
 
 
 class LiteAuthStorage(object):
-    def __init__(self, env):
+    def __init__(self, env, prefix):
         self.cache = cache_from_env(env)
         if not self.cache:
             raise Exception('Memcache required')
+        self.prefix = prefix
 
     def get_id(self, token):
         account_id = None
         expires = None
-        memcache_token_key = 'l_token/%s' % token
+        memcache_token_key = '%s/token/%s' % (self.prefix, token)
         data = self.cache.get(memcache_token_key)
         if data:
             expires, account_id = data
@@ -107,12 +109,13 @@ class LiteAuthStorage(object):
         return account_id, expires
 
     def del_id(self, token):
-        memcache_token_key = 'l_token/%s' % token
+        memcache_token_key = '%s/token/%s' % (self.prefix, token)
         self.cache.delete(memcache_token_key)
+        print ['del', memcache_token_key]
 
     def store_id(self, account_id, token, expires_in):
         expires = time() + expires_in
-        memcache_token_key = 'l_token/%s' % str(token)
+        memcache_token_key = '%s/token/%s' % (self.prefix, token)
         print ['set', memcache_token_key, str(account_id), expires]
         self.cache.set(memcache_token_key, (expires, account_id),
                        time=float(expires - time()))
@@ -124,21 +127,11 @@ class LiteAuth(object):
         self.app = app
         self.conf = conf
         self.version = 'v1'
-        self.google_client_id = conf.get('google_client_id')
-        if not self.google_client_id:
-            raise ValueError('google_client_id not set in config file')
-        self.google_client_secret = conf.get('google_client_secret')
-        if not self.google_client_secret:
-            raise ValueError('google_client_secret not set in config file')
         self.service_domain = conf.get('service_domain')
         if not self.service_domain:
             raise ValueError('service_domain not set in config file')
         self.service_endpoint = conf.get('service_endpoint', 'https://' + self.service_domain)
-        self.google_scope = conf.get('google_scope')
-        if not self.google_scope:
-            raise ValueError('google_scope not set in config file')
-        self.google_auth = '/login/google/'
-        self.google_prefix = 'g_'
+        self.auth_path = '/login/google/'
         self.logger = get_logger(conf, log_route='lite-auth')
         self.log_headers = conf.get('log_headers', 'false').lower() in TRUE_VALUES
         # try to refresh token
@@ -148,11 +141,20 @@ class LiteAuth(object):
         # Example: /v1/liteauth/whitelist
         self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
         self.storage_driver = None
+        self.metadata_key = conf.get('metadata_key', 'userdata').lower()
+        self.redirect_url = '%s%s' % (self.service_endpoint, self.auth_path)
+        try:
+            provider = conf.get('oauth_provider', 'google_oauth')
+            mod = __import__('providers.' + provider, fromlist=['Client'])
+            self.provider = getattr(mod, 'Client')
+            self.prefix = self.provider.PREFIX
+        except Exception:
+            raise ValueError('oauth_provider is invalid in config file')
 
     def __call__(self, env, start_response):
         req = Request(env)
-        self.storage_driver = LiteAuthStorage(env)
-        if req.path.startswith(self.google_auth):
+        self.storage_driver = LiteAuthStorage(env, self.prefix)
+        if req.path.startswith(self.auth_path):
             state = None
             if req.params:
                 code = req.params.get('code')
@@ -175,12 +177,11 @@ class LiteAuth(object):
         return self.app(env, _start_response)
 
     def do_google_oauth(self, state=None, approval_prompt='auto'):
-        c = Client(auth_endpoint='https://accounts.google.com/o/oauth2/auth',
-                   client_id=self.google_client_id,
-                   redirect_uri='%s%s' % (self.service_endpoint, self.google_auth))
-        loc = c.auth_uri(scope=self.google_scope.split(','), access_type='offline',
-                         state=state or '/', approval_prompt=approval_prompt)
-        return HTTPFound(location=loc)
+        oauth_client = self.provider.create_for_redirect(self.conf,
+                                                         self.redirect_url,
+                                                         state,
+                                                         approval_prompt)
+        return HTTPFound(location=oauth_client.redirect)
 
     def do_google_login(self, req, code, state=None):
         if 'logout' in code:
@@ -188,32 +189,23 @@ class LiteAuth(object):
             resp = Response(request=req, status=302,
                             headers={
                                 'set-cookie': cookie,
-                                'location': '%s%s?account=logout' % (self.service_endpoint, state)})
+                                'location': '%s%s?account=logout'
+                                            % (self.service_endpoint, state)})
             req.response = resp
             return resp
-        c = Client(token_endpoint='https://accounts.google.com/o/oauth2/token',
-                   resource_endpoint='https://www.googleapis.com/oauth2/v1',
-                   redirect_uri='%s%s' % (self.service_endpoint, self.google_auth),
-                   client_id=self.google_client_id,
-                   client_secret=self.google_client_secret)
-        c.request_token(code=code)
-        token = c.access_token
-        if hasattr(c, 'refresh_token'):
-            rc = Client(token_endpoint=c.token_endpoint,
-                        client_id=c.client_id,
-                        client_secret=c.client_secret,
-                        resource_endpoint=c.resource_endpoint)
-            rc.request_token(grant_type='refresh_token',
-                             refresh_token=c.refresh_token)
-            token = rc.access_token
+        oauth_client = self.provider.create_for_token(self.conf, self.redirect_url, code)
+        token = oauth_client.access_token
         if not token:
             req.response = HTTPUnauthorized()
             return req.response
-        user_info = self.get_new_user_info(req.environ, c)
+        user_info = oauth_client.userinfo
         if not user_info:
             req.response = HTTPForbidden()
             return req.response
-        account_id = self.get_account_id(user_info)
+        account_id = self.prefix + user_info.get('id')
+        self.storage_driver.store_id(account_id,
+                                     oauth_client.access_token,
+                                     oauth_client.expires_in)
         if self.whitelist_url:
             email = user_info.get('email', None)
             if not email:
@@ -231,18 +223,29 @@ class LiteAuth(object):
                                                   self.app, email, account_id,
                                                   req.environ):
                         return HTTPInternalServerError()
-            elif whitelist_id.startswith(self.google_prefix):
-                pass
-            else:
-                self.logger.warning('Whitelist for user %s contains wrong data: %s' % (email, whitelist_id))
-                return HTTPInternalServerError()
-        stored_info = retrieve_metadata(self.app, self.version, account_id, 'userdata', req.environ)
+            # elif whitelist_id.startswith(self.prefix):
+            #     pass
+            # else:
+            #     self.logger.warning('Whitelist for user %s '
+            #                         'contains wrong data: %s' % (email, whitelist_id))
+            #     return HTTPInternalServerError()
+        stored_info = retrieve_metadata(self.app,
+                                        self.version,
+                                        account_id,
+                                        self.metadata_key,
+                                        req.environ)
         if not stored_info:
-            if not hasattr(c, 'refresh_token'):
+            rtoken = oauth_client.refresh_token
+            if not rtoken:
                 return self.do_google_oauth(state=state, approval_prompt='force')
-            user_info['rtoken'] = c.refresh_token
+            user_info['rtoken'] = rtoken
             user_info['hash__'] = md5(json.dumps(sorted(user_info.items()))).hexdigest()
-            if not store_metadata(self.app, self.version, account_id, 'userdata', user_info, req.environ):
+            if not store_metadata(self.app,
+                                  self.version,
+                                  account_id,
+                                  self.metadata_key,
+                                  user_info,
+                                  req.environ):
                 req.response = HTTPInternalServerError()
                 return req.response
         else:
@@ -254,10 +257,15 @@ class LiteAuth(object):
                 # we need to update our stored userinfo
                 user_info['rtoken'] = rtoken
                 user_info['hash__'] = user_hash
-                if not store_metadata(self.app, self.version, account_id, 'userdata', user_info, req.environ):
+                if not store_metadata(self.app,
+                                      self.version,
+                                      account_id,
+                                      self.metadata_key,
+                                      user_info,
+                                      req.environ):
                     req.response = HTTPInternalServerError()
                     return req.response
-        cookie = self.create_session_cookie(token=token, expires_in=c.expires_in)
+        cookie = self.create_session_cookie(token=token, expires_in=oauth_client.expires_in)
         resp = Response(request=req, status=302,
                         headers={
                             'x-auth-token': token,
@@ -281,38 +289,24 @@ class LiteAuth(object):
 
     def refresh_token(self, env, account_id, expires):
         if expires - time() < self.refresh_before:
-                user_data = retrieve_metadata(self.app, self.version, account_id, 'userdata', env)
-                if not user_data:
-                    return None
-                rtoken = user_data.get('rtoken', None)
-                if not rtoken:
-                    return None
-                client = Client(token_endpoint='https://accounts.google.com/o/oauth2/token',
-                                resource_endpoint='https://www.googleapis.com/oauth2/v1',
-                                client_id=self.google_client_id,
-                                client_secret=self.google_client_secret)
-                error = client.request_token(grant_type='refresh_token',
-                                             refresh_token=rtoken)
-                if error:
-                    self.logger.info('%s' % str(error))
-                cookie = self.create_session_cookie(token=client.access_token,
-                                                    expires_in=client.expires_in)
-                self.storage_driver.store_id(account_id,
-                                             client.access_token, client.expires_in)
-                return cookie
-        return None
-
-    def get_account_id(self, user_info):
-        account_id = self.google_prefix + user_info.get('id')
-        return account_id
-
-    def get_new_user_info(self, env, client):
-        user_info = client.request('/userinfo')
-        if user_info:
-            account_id = self.get_account_id(user_info)
+            user_data = retrieve_metadata(self.app,
+                                          self.version,
+                                          account_id,
+                                          self.metadata_key,
+                                          env)
+            if not user_data:
+                return None
+            rtoken = user_data.get('rtoken', None)
+            if not rtoken:
+                return None
+            oauth_client = self.provider.create_for_refresh(self.conf, rtoken)
+            cookie = self.create_session_cookie(token=oauth_client.access_token,
+                                                expires_in=oauth_client.expires_in)
             self.storage_driver.store_id(account_id,
-                                         client.access_token, client.expires_in)
-        return user_info
+                                         oauth_client.access_token,
+                                         oauth_client.expires_in)
+            return cookie
+        return None
 
 
 def filter_factory(global_conf, **local_conf):
