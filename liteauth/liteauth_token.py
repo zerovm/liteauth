@@ -40,10 +40,13 @@ class LiteAuthToken(object):
         self.conf = conf
         self.logger = get_logger(conf, log_route='lite-auth')
         self.storage_driver = conf.get('storage_driver', LiteAuthStorage)
-        provider = conf.get('oauth_provider', 'google_oauth')
-        mod = __import__('providers.' + provider, fromlist=['Client'])
-        self.provider = getattr(mod, 'Client')
-        self.prefix = self.provider.PREFIX
+        try:
+            provider = conf.get('oauth_provider', 'google_oauth')
+            mod = __import__('providers.' + provider, fromlist=['Client'])
+            self.provider = getattr(mod, 'Client')
+            self.prefix = self.provider.PREFIX
+        except Exception:
+            raise ValueError('oauth_provider is invalid in config file')
 
     def __call__(self, env, start_response):
         req = Request(env)

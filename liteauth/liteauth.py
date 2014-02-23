@@ -143,10 +143,13 @@ class LiteAuth(object):
         self.storage_driver = None
         self.metadata_key = conf.get('metadata_key', 'userdata').lower()
         self.redirect_url = '%s%s' % (self.service_endpoint, self.auth_path)
-        provider = conf.get('oauth_provider', 'google_oauth')
-        mod = __import__('providers.' + provider, fromlist=['Client'])
-        self.provider = getattr(mod, 'Client')
-        self.prefix = self.provider.PREFIX
+        try:
+            provider = conf.get('oauth_provider', 'google_oauth')
+            mod = __import__('providers.' + provider, fromlist=['Client'])
+            self.provider = getattr(mod, 'Client')
+            self.prefix = self.provider.PREFIX
+        except Exception:
+            raise ValueError('oauth_provider is invalid in config file')
 
     def __call__(self, env, start_response):
         req = Request(env)
