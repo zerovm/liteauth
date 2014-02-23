@@ -1,11 +1,13 @@
+from liteauth.providers.abstract_oauth import OauthClientInterface
 from oauth import Client as OauthClient
 
 
-class Client(object):
+class Client(OauthClientInterface):
 
     PREFIX = 'g_'
 
     def __init__(self, conf):
+        super(Client, self).__init__()
         self.google_client_id = conf.get('google_client_id')
         if not self.google_client_id:
             raise ValueError('google_client_id not set in config file')
@@ -15,29 +17,28 @@ class Client(object):
         self.google_scope = conf.get('google_scope')
         if not self.google_scope:
             raise ValueError('google_scope not set in config file')
-        self.access_token = None
+        self.google_redirect_url = conf.get('google_redirect_url')
+        if not self.google_redirect_url:
+            raise ValueError('google_redirect_url not set in config file')
         self.refresh_token = None
-        self.expires_in = None
-        self.userinfo = None
-        self.redirect = None
 
     @classmethod
-    def create_for_redirect(cls, conf, redirect_url, state=None, approval_prompt='auto'):
+    def create_for_redirect(cls, conf, state=None, approval_prompt='auto'):
         gclient = cls(conf)
         c = OauthClient(auth_endpoint='https://accounts.google.com/o/oauth2/auth',
                         client_id=gclient.google_client_id,
-                        redirect_uri=redirect_url)
+                        redirect_uri=gclient.google_redirect_url)
         loc = c.auth_uri(scope=gclient.google_scope.split(','), access_type='offline',
                          state=state or '/', approval_prompt=approval_prompt)
         gclient.redirect = loc
         return gclient
 
     @classmethod
-    def create_for_token(cls, conf, redirect_url, code):
+    def create_for_token(cls, conf, code):
         gclient = cls(conf)
         c = OauthClient(token_endpoint='https://accounts.google.com/o/oauth2/token',
                         resource_endpoint='https://www.googleapis.com/oauth2/v1',
-                        redirect_uri=redirect_url,
+                        redirect_uri=gclient.google_redirect_url,
                         client_id=gclient.google_client_id,
                         client_secret=gclient.google_client_secret)
         c.request_token(code=code)

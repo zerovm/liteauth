@@ -1,5 +1,6 @@
 from Cookie import SimpleCookie
 from liteauth import LiteAuthStorage
+from liteauth.providers.abstract_oauth import load_provider
 from swift.common.swob import Request, HTTPUnauthorized, HTTPNotFound, HTTPForbidden
 from swift.common.utils import get_logger, split_path
 from swift.common.middleware.acl import clean_acl
@@ -40,13 +41,8 @@ class LiteAuthToken(object):
         self.conf = conf
         self.logger = get_logger(conf, log_route='lite-auth')
         self.storage_driver = conf.get('storage_driver', LiteAuthStorage)
-        try:
-            provider = conf.get('oauth_provider', 'google_oauth')
-            mod = __import__('liteauth.providers.' + provider, fromlist=['Client'])
-            self.provider = getattr(mod, 'Client')
-            self.prefix = self.provider.PREFIX
-        except Exception:
-            raise ValueError('oauth_provider is invalid in config file')
+        provider = load_provider(conf.get('oauth_provider', 'google_oauth'))
+        self.prefix = provider.PREFIX
 
     def __call__(self, env, start_response):
         req = Request(env)
