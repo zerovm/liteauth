@@ -145,7 +145,7 @@ class LiteAuth(object):
         self.redirect_url = '%s%s' % (self.service_endpoint, self.auth_path)
         try:
             provider = conf.get('oauth_provider', 'google_oauth')
-            mod = __import__('providers.' + provider, fromlist=['Client'])
+            mod = __import__('liteauth.providers.' + provider, fromlist=['Client'])
             self.provider = getattr(mod, 'Client')
             self.prefix = self.provider.PREFIX
         except Exception:
