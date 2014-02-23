@@ -2,6 +2,7 @@ from Cookie import SimpleCookie
 import datetime
 import urlparse
 from liteauth import LiteAuthStorage
+from liteauth.providers.abstract_oauth import load_provider
 from swift.common.swob import wsgify, HTTPUnauthorized, HTTPForbidden, Response, HTTPFound
 from swift.common.utils import get_logger
 
@@ -11,13 +12,8 @@ class OauthLogin(object):
         self.app = app
         self.conf = conf
         self.logger = get_logger(conf, log_route='liteauth')
-        try:
-            provider = conf.get('oauth_provider', 'google_oauth')
-            mod = __import__('liteauth.providers.' + provider, fromlist=['Client'])
-            self.provider = getattr(mod, 'Client')
-            self.prefix = self.provider.PREFIX
-        except Exception:
-            raise ValueError('oauth_provider is invalid in config file')
+        self.provider = load_provider(conf.get('oauth_provider', 'google_oauth'))
+        self.prefix = self.provider.PREFIX
         self.service_endpoint = conf.get('service_endpoint', '')
         if not self.service_endpoint:
             raise ValueError('service_endpoint not set in config file')
@@ -26,9 +22,17 @@ class OauthLogin(object):
         parsed_path = urlparse.urlparse(self.service_endpoint)
         if not parsed_path.netloc:
             raise ValueError('service_endpoint is invalid in config file')
-        self.service_domain = parsed_path.netloc
+        # by default service_domain can be extracted from the endpoint
+        # in case where auth domain is different from service domain:
+        # set up the service domain separately
+        # Example:
+        # service_endpoint = https://auth.example.com/
+        # service_domain = www.example.com
+        self.service_domain = conf.get('service_domain', parsed_path.netloc)
         self.login_path = parsed_path.path
         self.scheme = parsed_path.scheme
+        if self.scheme != 'https':
+            raise ValueError('service_endpoint must have https:// scheme')
         self.storage_driver = None
 
     @wsgify
@@ -45,9 +49,7 @@ class OauthLogin(object):
 
     def handle_login(self, req, code, state):
         self.storage_driver = LiteAuthStorage(req.environ, self.prefix)
-        oauth_client = self.provider.create_for_token(self.conf,
-                                                      self.service_endpoint,
-                                                      code)
+        oauth_client = self.provider.create_for_token(self.conf, code)
         token = oauth_client.access_token
         if not token:
             req.response = HTTPUnauthorized(request=req)
@@ -72,10 +74,10 @@ class OauthLogin(object):
                                          account_id)})
 
     def handle_oauth(self, state=None, approval_prompt='auto'):
-        oauth_client = self.provider.create_for_redirect(self.conf,
-                                                         self.service_endpoint,
-                                                         state,
-                                                         approval_prompt)
+        oauth_client = self.provider.create_for_redirect(
+            self.conf,
+            state=state,
+            approval_prompt=approval_prompt)
         return HTTPFound(location=oauth_client.redirect)
 
     def create_session_cookie(self, token='', path='/', expires_in=0):

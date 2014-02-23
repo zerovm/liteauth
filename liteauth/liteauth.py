@@ -3,6 +3,7 @@ from urllib import quote
 from time import time
 import datetime
 from hashlib import md5
+from providers.abstract_oauth import load_provider
 
 from swift.common.constraints import MAX_META_VALUE_LENGTH
 
@@ -143,13 +144,8 @@ class LiteAuth(object):
         self.storage_driver = None
         self.metadata_key = conf.get('metadata_key', 'userdata').lower()
         self.redirect_url = '%s%s' % (self.service_endpoint, self.auth_path)
-        try:
-            provider = conf.get('oauth_provider', 'google_oauth')
-            mod = __import__('liteauth.providers.' + provider, fromlist=['Client'])
-            self.provider = getattr(mod, 'Client')
-            self.prefix = self.provider.PREFIX
-        except Exception:
-            raise ValueError('oauth_provider is invalid in config file')
+        self.provider = load_provider(conf.get('oauth_provider', 'google_oauth'))
+        self.prefix = self.provider.PREFIX
 
     def __call__(self, env, start_response):
         req = Request(env)
@@ -177,10 +173,10 @@ class LiteAuth(object):
         return self.app(env, _start_response)
 
     def do_google_oauth(self, state=None, approval_prompt='auto'):
-        oauth_client = self.provider.create_for_redirect(self.conf,
-                                                         self.redirect_url,
-                                                         state,
-                                                         approval_prompt)
+        oauth_client = self.provider.create_for_redirect(
+            self.conf,
+            state=state,
+            approval_prompt=approval_prompt)
         return HTTPFound(location=oauth_client.redirect)
 
     def do_google_login(self, req, code, state=None):
@@ -193,7 +189,7 @@ class LiteAuth(object):
                                             % (self.service_endpoint, state)})
             req.response = resp
             return resp
-        oauth_client = self.provider.create_for_token(self.conf, self.redirect_url, code)
+        oauth_client = self.provider.create_for_token(self.conf, code)
         token = oauth_client.access_token
         if not token:
             req.response = HTTPUnauthorized()
