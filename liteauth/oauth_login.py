@@ -1,7 +1,7 @@
 from Cookie import SimpleCookie
 import datetime
 import urlparse
-from liteauth.liteauth import LiteAuthStorage
+from liteauth import LiteAuthStorage
 from swift.common.swob import wsgify, HTTPUnauthorized, HTTPForbidden, Response, HTTPFound
 from swift.common.utils import get_logger
 
@@ -33,11 +33,7 @@ class OauthLogin(object):
 
     @wsgify
     def __call__(self, req):
-        try:
-            (endpoint, _rest) = req.split_path(1, 2, True)
-        except ValueError:
-            return self.app
-        if endpoint == self.login_path:
+        if req.path == self.login_path:
             state = None
             if req.params:
                 code = req.params.get('code')
