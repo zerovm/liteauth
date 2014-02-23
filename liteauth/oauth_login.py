@@ -2,7 +2,7 @@ from Cookie import SimpleCookie
 import datetime
 import urlparse
 from liteauth import LiteAuthStorage
-from liteauth.providers.abstract_oauth import load_provider
+from providers.abstract_oauth import load_provider
 from swift.common.swob import wsgify, HTTPUnauthorized, HTTPForbidden, Response, HTTPFound
 from swift.common.utils import get_logger
 

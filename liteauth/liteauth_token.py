@@ -1,6 +1,6 @@
 from Cookie import SimpleCookie
 from liteauth import LiteAuthStorage
-from liteauth.providers.abstract_oauth import load_provider
+from providers.abstract_oauth import load_provider
 from swift.common.swob import Request, HTTPUnauthorized, HTTPNotFound, HTTPForbidden
 from swift.common.utils import get_logger, split_path
 from swift.common.middleware.acl import clean_acl
