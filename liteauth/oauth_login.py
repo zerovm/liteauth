@@ -13,7 +13,7 @@ class OauthLogin(object):
         self.logger = get_logger(conf, log_route='liteauth')
         try:
             provider = conf.get('oauth_provider', 'google_oauth')
-            mod = __import__('providers.' + provider, fromlist=['Client'])
+            mod = __import__('liteauth.providers.' + provider, fromlist=['Client'])
             self.provider = getattr(mod, 'Client')
             self.prefix = self.provider.PREFIX
         except Exception:
