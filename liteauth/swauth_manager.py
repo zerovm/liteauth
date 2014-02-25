@@ -40,6 +40,13 @@ def store_data_in_url(url, app, key, data, env):
     return True
 
 
+def copy_env(src_req, dest_req):
+    for key in ('swift.cache', 'swift.source', 'swift.trans_id',
+                    'eventlet.posthooks'):
+            if key in src_req.environ:
+                dest_req.environ[key] = src_req.environ[key]
+
+
 class SwauthManager(object):
     def __init__(self, app, conf):
         self.app = app
@@ -144,6 +151,7 @@ class SwauthManager(object):
                                                    user_email),
                                    headers={'x-auth-admin-user': '.super_admin',
                                             'x-auth-admin-key': self.super_admin_key})
+        copy_env(req, swauth_req)
         resp = swauth_req.get_response(self.app)
         return resp
 
@@ -155,6 +163,7 @@ class SwauthManager(object):
                                    headers={'x-auth-admin-user': '.super_admin',
                                             'x-auth-admin-key': self.super_admin_key})
         swauth_req.method = 'PUT'
+        copy_env(req, swauth_req)
         resp = swauth_req.get_response(self.app)
         if not resp.status_int // 100 == 2:
             return resp
@@ -166,6 +175,7 @@ class SwauthManager(object):
                                             'x-auth-admin-key': self.super_admin_key,
                                             'x-auth-user-key': user_key})
         swauth_req.method = 'PUT'
+        copy_env(req, swauth_req)
         resp = swauth_req.get_response(self.app)
         return resp
 
