@@ -173,7 +173,8 @@ class SwauthManager(object):
                                                    user_email),
                                    headers={'x-auth-admin-user': '.super_admin',
                                             'x-auth-admin-key': self.super_admin_key,
-                                            'x-auth-user-key': user_key})
+                                            'x-auth-user-key': user_key,
+                                            'x-auth-user-admin': 'true'})
         swauth_req.method = 'PUT'
         copy_env(req, swauth_req)
         resp = swauth_req.get_response(self.app)
