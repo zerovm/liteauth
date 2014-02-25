@@ -22,13 +22,14 @@ class OauthLogin(object):
         parsed_path = urlparse.urlparse(self.service_endpoint)
         if not parsed_path.netloc:
             raise ValueError('service_endpoint is invalid in config file')
+        self.auth_domain = parsed_path.netloc
         # by default service_domain can be extracted from the endpoint
         # in case where auth domain is different from service domain:
         # set up the service domain separately
         # Example:
         # service_endpoint = https://auth.example.com/
         # service_domain = www.example.com
-        self.service_domain = conf.get('service_domain', parsed_path.netloc)
+        self.service_domain = conf.get('service_domain', self.auth_domain)
         self.login_path = parsed_path.path
         self.scheme = parsed_path.scheme
         if self.scheme != 'https':
@@ -84,8 +85,8 @@ class OauthLogin(object):
         cookie = SimpleCookie()
         cookie['session'] = token
         cookie['session']['path'] = path
-        if not self.service_domain.startswith('localhost'):
-            cookie['session']['domain'] = self.service_domain
+        if not self.auth_domain.startswith('localhost'):
+            cookie['session']['domain'] = self.auth_domain
         expiration = datetime.datetime.utcnow() + datetime.timedelta(seconds=expires_in)
         cookie['session']['expires'] = expiration.strftime('%a, %d %b %Y %H:%M:%S GMT')
         return cookie['session'].output(header='').strip()
