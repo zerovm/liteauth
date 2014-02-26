@@ -1,4 +1,5 @@
 from Cookie import SimpleCookie
+from urllib import quote
 import datetime
 from liteauth import LiteAuthStorage
 from providers.abstract_oauth import load_provider
@@ -75,7 +76,6 @@ class LiteAuthToken(object):
                 secure = False
                 if path_parts.scheme == 'https':
                     secure = True
-                print [auth_token, expires_in, storage_url, domain]
                 if auth_token and domain:
                     new_cookie = create_auth_cookie('session',
                                                     domain,
@@ -86,7 +86,7 @@ class LiteAuthToken(object):
                     # response_headers.append(('Set-Cookie', new_cookie))
                     new_cookie += create_auth_cookie('storage',
                                                      domain,
-                                                     token=storage_url,
+                                                     token=quote(storage_url),
                                                      expires_in=expires_in)
                     response_headers.append(('Set-Cookie', new_cookie))
             return start_response(status, response_headers, exc_info)
