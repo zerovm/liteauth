@@ -66,7 +66,6 @@ class LiteAuthToken(object):
 
         def cookie_resp(status, response_headers, exc_info=None):
             resp_headers = HeaderKeyDict(response_headers)
-            print resp_headers
             if 'x-auth-token' in resp_headers:
                 auth_token = resp_headers['x-auth-token']
                 expires_in = int(resp_headers.get('x-auth-token-expires', 0))
@@ -83,12 +82,12 @@ class LiteAuthToken(object):
                                                     expires_in=expires_in,
                                                     secure=secure,
                                                     httponly=True)
-                    response_headers.append(('Set-Cookie', new_cookie))
-                    new_cookie = create_auth_cookie('storage',
-                                                    domain,
-                                                    token=storage_url,
-                                                    expires_in=expires_in,
-                                                    secure=secure)
+                    # response_headers.append(('Set-Cookie', new_cookie))
+                    new_cookie += create_auth_cookie('storage',
+                                                     domain,
+                                                     token=storage_url,
+                                                     expires_in=expires_in,
+                                                     secure=secure)
                     response_headers.append(('Set-Cookie', new_cookie))
             return start_response(status, response_headers, exc_info)
 
