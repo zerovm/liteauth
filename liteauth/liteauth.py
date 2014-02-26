@@ -240,6 +240,9 @@ class LiteAuth(object):
                             headers={
                                 'x-auth-token': 'logout',
                                 'x-auth-token-expires': 0,
+                                'x-storage-url': '%s/%s'
+                                                 % (self.service_endpoint,
+                                                    self.version),
                                 'location': '%s%s?account=logout'
                                             % (self.service_endpoint, state)})
             req.response = resp
