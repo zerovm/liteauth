@@ -66,6 +66,7 @@ class LiteAuthToken(object):
 
         def cookie_resp(status, response_headers, exc_info=None):
             resp_headers = HeaderKeyDict(response_headers)
+            print resp_headers
             if 'x-auth-token' in resp_headers:
                 auth_token = resp_headers['x-auth-token']
                 expires_in = int(resp_headers.get('x-auth-token-expires', 0))
