@@ -75,6 +75,7 @@ class LiteAuthToken(object):
                 secure = False
                 if path_parts.scheme == 'https':
                     secure = True
+                print [auth_token, expires_in, storage_url, domain]
                 if auth_token and domain:
                     new_cookie = create_auth_cookie('session',
                                                     domain,
