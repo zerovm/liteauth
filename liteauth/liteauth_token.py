@@ -83,11 +83,10 @@ class LiteAuthToken(object):
                                                     secure=secure,
                                                     httponly=True)
                     # response_headers.append(('Set-Cookie', new_cookie))
-                    new_cookie += '; ' + create_auth_cookie('storage',
-                                                            domain,
-                                                            token=storage_url,
-                                                            expires_in=expires_in,
-                                                            secure=secure)
+                    new_cookie += create_auth_cookie('storage',
+                                                     domain,
+                                                     token=storage_url,
+                                                     expires_in=expires_in)
                     response_headers.append(('Set-Cookie', new_cookie))
             return start_response(status, response_headers, exc_info)
 
