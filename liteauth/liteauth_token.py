@@ -1,37 +1,45 @@
 from Cookie import SimpleCookie
+import datetime
 from liteauth import LiteAuthStorage
 from providers.abstract_oauth import load_provider
-from swift.common.swob import Request, HTTPUnauthorized, HTTPNotFound, HTTPForbidden
-from swift.common.utils import get_logger, split_path
-from swift.common.middleware.acl import clean_acl
+from swift.common.swob import Request, HeaderKeyDict
+from swift.common.utils import get_logger, urlparse
 
 
-def parse_lite_acl(acl_string):
-    """
-    Parses Litestack ACL string into an account list.
+def create_auth_cookie(cookie_name, auth_domain,
+                       token='', path='/', expires_in=0,
+                       secure=False, httponly=False):
+    cookie = SimpleCookie()
+    cookie[cookie_name] = token
+    cookie[cookie_name]['path'] = path
+    if not auth_domain.startswith('localhost'):
+        cookie[cookie_name]['domain'] = auth_domain
+    expiration = datetime.datetime.utcnow() + \
+        datetime.timedelta(seconds=expires_in)
+    cookie[cookie_name]['expires'] = expiration.strftime(
+        '%a, %d %b %Y %H:%M:%S GMT')
+    if secure:
+        cookie[cookie_name]['secure'] = True
+    if httponly:
+        cookie[cookie_name]['HttpOnly'] = True
+    return cookie[cookie_name].output(header='').strip()
 
-    :param acl_string: The standard Swift ACL string to parse.
-    :returns: list of user accounts
-    """
-    accounts = []
-    if acl_string:
-        for value in acl_string.split(','):
-            accounts.append(value)
-    return accounts
 
-
-def extract_auth_token(req):
-    auth_token = None
+def extract_from_cookie_to_header(req, cookie_key, header_names):
+    value = None
     try:
-        auth_token = SimpleCookie(req.environ.get('HTTP_COOKIE', ''))['session'].value
-        if auth_token:
-            req.headers['x-auth-token'] = auth_token
-            req.headers['x-storage-token'] = auth_token
+        value = SimpleCookie(req.environ.get('HTTP_COOKIE', ''))[cookie_key].value
+        if value:
+            for name in header_names:
+                req.headers[name] = value
     except KeyError:
         pass
-    if not auth_token:
-        auth_token = req.headers.get('x-auth-token', None)
-    return auth_token
+    if not value:
+        for name in header_names:
+            value = req.headers.get(name, None)
+            if value:
+                break
+    return value
 
 
 class LiteAuthToken(object):
@@ -43,52 +51,47 @@ class LiteAuthToken(object):
         self.storage_driver = conf.get('storage_driver', LiteAuthStorage)
         provider = load_provider(conf.get('oauth_provider', 'google_oauth'))
         self.prefix = provider.PREFIX
+        self.cookie_key = conf.get('cookie_key', 'session')
 
     def __call__(self, env, start_response):
         req = Request(env)
-        token = extract_auth_token(req)
+        token = extract_from_cookie_to_header(req,
+                                              self.cookie_key,
+                                              ('x-auth-token', 'x-storage-token'))
         if token:
             account_id, _junk = \
                 self.storage_driver(env, self.prefix).get_id(token)
             if account_id:
                 req.environ['REMOTE_USER'] = account_id
-        req.environ['swift.authorize'] = self.authorize
-        req.environ['swift.clean_acl'] = clean_acl
-        return self.app(env, start_response)
 
-    def authorize(self, req):
-        try:
-            version, account, container, obj = split_path(req.path, 1, 4, True)
-        except ValueError:
-            self.logger.increment('errors')
-            return HTTPNotFound(request=req)
-        if not account:
-            return self.denied_response(req)
-        user_data = (req.remote_user or '')
-        if req.method in 'POST' and 'x-zerovm-execute' in req.headers \
-                and account == user_data:
-            return None
-        if account == user_data and \
-                (req.method not in ('DELETE', 'PUT', 'POST') or container):
-            req.environ['swift_owner'] = True
-            return None
-        if container:
-            accounts = parse_lite_acl(getattr(req, 'acl', None))
-            # * is a full public access (Everybody)
-            if '*' in accounts or user_data in accounts:
-                return None
-            # ** is a limited public access (Authorized Users)
-            if '**' in accounts and user_data:
-                return None
-        return self.denied_response(req)
+        def cookie_resp(status, response_headers, exc_info=None):
+            resp_headers = HeaderKeyDict(response_headers)
+            if 'x-auth-token' in resp_headers:
+                auth_token = resp_headers['x-auth-token']
+                expires_in = int(resp_headers.get('x-auth-token-expires', 0))
+                storage_url = resp_headers.get('x-storage-url', '')
+                path_parts = urlparse(storage_url)
+                domain = path_parts.netloc
+                secure = False
+                if path_parts.scheme == 'https':
+                    secure = True
+                if all((auth_token, expires_in, domain)):
+                    new_cookie = create_auth_cookie('session',
+                                                    domain,
+                                                    token=auth_token,
+                                                    expires_in=expires_in,
+                                                    secure=secure,
+                                                    httponly=True)
+                    response_headers.append(('Set-Cookie', new_cookie))
+                    new_cookie = create_auth_cookie('storage',
+                                                    domain,
+                                                    token=storage_url,
+                                                    expires_in=expires_in,
+                                                    secure=secure)
+                    response_headers.append(('Set-Cookie', new_cookie))
+            return start_response(status, response_headers, exc_info)
 
-    def denied_response(self, req):
-        if req.remote_user:
-            self.logger.increment('forbidden')
-            return HTTPForbidden(request=req)
-        else:
-            self.logger.increment('unauthorized')
-            return HTTPUnauthorized(request=req)
+        return self.app(env, cookie_resp)
 
 
 def filter_factory(global_conf, **local_conf):

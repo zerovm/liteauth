@@ -1,21 +1,34 @@
-from Cookie import SimpleCookie
 from urllib import quote
 from time import time
-import datetime
 from hashlib import md5
 from providers.abstract_oauth import load_provider
 
 from swift.common.constraints import MAX_META_VALUE_LENGTH
-
+from swift.common.middleware.acl import clean_acl
 
 try:
     import simplejson as json
 except ImportError:
     import json
 
-from swift.common.swob import HTTPFound, Response, Request, HTTPUnauthorized, \
-    HTTPForbidden, HTTPInternalServerError
-from swift.common.utils import cache_from_env, get_logger, TRUE_VALUES
+from swift.common.swob import HTTPFound, Response, Request, \
+    HTTPUnauthorized, HTTPForbidden, HTTPInternalServerError, HTTPNotFound
+from swift.common.utils import cache_from_env, get_logger, TRUE_VALUES, \
+    split_path
+
+
+def parse_lite_acl(acl_string):
+    """
+    Parses Litestack ACL string into an account list.
+
+    :param acl_string: The standard Swift ACL string to parse.
+    :returns: list of user accounts
+    """
+    accounts = []
+    if acl_string:
+        for value in acl_string.split(','):
+            accounts.append(value)
+    return accounts
 
 
 def retrieve_metadata(app, version, account_id, name, env):
@@ -54,7 +67,8 @@ def store_metadata(app, version, account_id, name, user_data, env):
     userdata_req.environ['swift.cache'] = env['swift.cache']
     i = 0
     while user_data:
-        userdata_req.headers['x-account-meta-%s%d' % (name, i)] = user_data[:MAX_META_VALUE_LENGTH]
+        userdata_req.headers['x-account-meta-%s%d' % (name, i)] = \
+            user_data[:MAX_META_VALUE_LENGTH]
         user_data = user_data[MAX_META_VALUE_LENGTH:]
         i += 1
     resp = userdata_req.get_response(app)
@@ -71,7 +85,8 @@ def get_account_from_whitelist(whitelist_url, app, email, logger, env):
     req.environ['swift.cache'] = env['swift.cache']
     resp = req.get_response(app)
     if resp.status_int >= 300:
-        logger.info('Whitelist response for %s is %s %s' % (req.path, resp.status, resp.body))
+        logger.info('Whitelist response for %s is %s %s'
+                    % (req.path, resp.status, resp.body))
         return None
     return resp.body.strip()
 
@@ -131,10 +146,12 @@ class LiteAuth(object):
         self.service_domain = conf.get('service_domain')
         if not self.service_domain:
             raise ValueError('service_domain not set in config file')
-        self.service_endpoint = conf.get('service_endpoint', 'https://' + self.service_domain)
+        self.service_endpoint = conf.get('service_endpoint',
+                                         'https://' + self.service_domain)
         self.auth_path = '/login/google/'
         self.logger = get_logger(conf, log_route='lite-auth')
-        self.log_headers = conf.get('log_headers', 'false').lower() in TRUE_VALUES
+        self.log_headers = conf.get('log_headers', 'false').lower() \
+            in TRUE_VALUES
         # try to refresh token
         # when less than this amount of seconds left
         self.refresh_before = conf.get('token_refresh_before', 60 * 29)
@@ -162,15 +179,53 @@ class LiteAuth(object):
         _start_response = start_response
         if token:
             account_id, expires = self.storage_driver.get_id(token)
+            req.environ['swift.authorize'] = self.authorize
+            req.environ['swift.clean_acl'] = clean_acl
             if account_id and expires:
-                new_cookie = self.refresh_token(env, account_id, expires)
-                if new_cookie:
+                new_headers = self.refresh_token(env, account_id, expires)
+                if new_headers:
 
-                    def cookie_resp(status, response_headers, exc_info=None):
-                        response_headers.append(('Set-Cookie', new_cookie))
+                    def refresh_resp(status, response_headers, exc_info=None):
+                        for k, v in new_headers.iteritems():
+                            response_headers.append((k, v))
                         return start_response(status, response_headers, exc_info)
-                    _start_response = cookie_resp
+
+                    _start_response = refresh_resp
         return self.app(env, _start_response)
+
+    def authorize(self, req):
+        try:
+            version, account, container, obj = split_path(req.path, 1, 4, True)
+        except ValueError:
+            self.logger.increment('errors')
+            return HTTPNotFound(request=req)
+        if not account:
+            return self.denied_response(req)
+        user_data = (req.remote_user or '')
+        if req.method in 'POST' and 'x-zerovm-execute' in req.headers \
+                and account == user_data:
+            return None
+        if account == user_data and \
+                (req.method not in ('DELETE', 'PUT', 'POST') or container):
+            req.environ['swift_owner'] = True
+            return None
+        if container:
+            accounts = parse_lite_acl(getattr(req, 'acl', None))
+            # * is a full public access (Everybody)
+            if '*' in accounts or user_data in accounts:
+                return None
+            # ** is a limited public access (Authorized Users)
+            if '**' in accounts and user_data:
+                return None
+        return self.denied_response(req)
+
+    def denied_response(self, req):
+        if req.remote_user:
+            self.logger.increment('forbidden')
+            return HTTPForbidden(request=req)
+        else:
+            self.logger.increment('unauthorized')
+            return HTTPUnauthorized(request=req)
 
     def do_google_oauth(self, state=None, approval_prompt='auto'):
         oauth_client = self.provider.create_for_redirect(
@@ -181,10 +236,10 @@ class LiteAuth(object):
 
     def do_google_login(self, req, code, state=None):
         if 'logout' in code:
-            cookie = self.create_session_cookie()
             resp = Response(request=req, status=302,
                             headers={
-                                'set-cookie': cookie,
+                                'x-auth-token': 'logout',
+                                'x-auth-token-expires': 0,
                                 'location': '%s%s?account=logout'
                                             % (self.service_endpoint, state)})
             req.response = resp
@@ -261,27 +316,21 @@ class LiteAuth(object):
                                       req.environ):
                     req.response = HTTPInternalServerError()
                     return req.response
-        cookie = self.create_session_cookie(token=token, expires_in=oauth_client.expires_in)
         resp = Response(request=req, status=302,
                         headers={
                             'x-auth-token': token,
                             'x-storage-token': token,
-                            'x-storage-url': '%s/%s/%s' % (self.service_endpoint, self.version, account_id),
-                            'set-cookie': cookie,
-                            'location': '%s%s?account=%s' % (self.service_endpoint, state or '/', account_id)})
+                            'x-storage-url': '%s/%s/%s'
+                                             % (self.service_endpoint,
+                                                self.version,
+                                                account_id),
+                            'location': '%s%s?account=%s'
+                                        % (self.service_endpoint,
+                                           state or '/',
+                                           account_id)})
         #print resp.headers
         req.response = resp
         return resp
-
-    def create_session_cookie(self, token='', path='/', expires_in=0):
-        cookie = SimpleCookie()
-        cookie['session'] = token
-        cookie['session']['path'] = path
-        if not self.service_domain.startswith('localhost'):
-            cookie['session']['domain'] = self.service_domain
-        expiration = datetime.datetime.utcnow() + datetime.timedelta(seconds=expires_in)
-        cookie['session']['expires'] = expiration.strftime('%a, %d %b %Y %H:%M:%S GMT')
-        return cookie['session'].output(header='').strip()
 
     def refresh_token(self, env, account_id, expires):
         if expires - time() < self.refresh_before:
@@ -296,12 +345,19 @@ class LiteAuth(object):
             if not rtoken:
                 return None
             oauth_client = self.provider.create_for_refresh(self.conf, rtoken)
-            cookie = self.create_session_cookie(token=oauth_client.access_token,
-                                                expires_in=oauth_client.expires_in)
+            headers = {
+                'X-Auth-Token': oauth_client.access_token,
+                'X-Auth-Token-Expires': oauth_client.expires_in,
+                'X-Storage-Token': oauth_client.access_token,
+                'X-Storage-Url': '%s/%s/%s'
+                                 % (self.service_endpoint,
+                                    self.version,
+                                    account_id),
+            }
             self.storage_driver.store_id(account_id,
                                          oauth_client.access_token,
                                          oauth_client.expires_in)
-            return cookie
+            return headers
         return None
 
 
