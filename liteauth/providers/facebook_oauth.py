@@ -47,6 +47,6 @@ class Client(OauthClientInterface):
                         client_secret=gclient.facebook_client_secret)
         c.request_token(code=code, parser=_parser)
         gclient.access_token = c.access_token
-        gclient.expires_in = c.expires
+        gclient.expires_in = int(c.expires)
         gclient.userinfo = c.request('/me')
         return gclient
