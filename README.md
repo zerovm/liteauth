@@ -93,7 +93,7 @@ Request: `GET <auth_endpoint_domain>/profile`
 Responses:
 
   - `200` -> user is ok, you will get back a json document with the following format:
-
+~~~~~
 	{
 	  "groups": [
 	    { "name": "<user_account_id>:<user_name>" },
@@ -102,6 +102,7 @@ Responses:
            ],
            "auth": "plaintext:<user_authorization_key>"
 	}
+~~~~~
 
   - `401` -> user is unathorized for the operation (cookies expired?), `prompt to re-login`.
   - `404` -> user never logged in before, call `Update Profile`.
