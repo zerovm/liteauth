@@ -94,14 +94,14 @@ Responses:
 
   - `200` -> user is ok, you will get back a json document with the following format:
 
-	<pre>{
+	{
 	  "groups": [
 	    { "name": "<user_account_id>:<user_name>" },
              { "name": "<user_account_id>" },
              { "name": ".admin"}
            ],
            "auth": "plaintext:<user_authorization_key>"
-	}</pre>
+	}
 
   - `401` -> user is unathorized for the operation (cookies expired?), `prompt to re-login`.
   - `404` -> user never logged in before, call `Update Profile`.
@@ -114,14 +114,14 @@ Request: `GET https://auth.example.com/profile`
 
 Response: 
 
-          {
-	  "groups": [
-	    { "name": "g_11111111:me@example.com" },
-             { "name": "g_11111111" },
-             { "name": ".admin"}
-           ],
-           "auth": "plaintext:aaaa-bbbb-cccc-dddd"
-	}
+    {
+      "groups": [
+        { "name": "g_11111111:me@example.com" },
+        { "name": "g_11111111" },
+        { "name": ".admin"}
+      ],
+      "auth": "plaintext:aaaa-bbbb-cccc-dddd"
+    }
 
 ----
 
