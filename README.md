@@ -3,9 +3,9 @@ liteauth
 
 LiteStack authentication middlewares
 
-## Swauth integrated API
+# Swauth integrated API
 
-# Config
+## Config
 
 	[filter:liteauth-token]
 	use = egg:liteauth#liteauth_token
@@ -46,18 +46,16 @@ Take note of the following config options, will be used in API calls:
  - auth_endpoint
  - service_domain
 
-# API calls
+## API calls
 
-Example strings:
+### Example strings ###
 
-auth_endpoint = https://auth.example.com/login/fb
-service_domain = https://www.example.com
+    auth_endpoint = https://auth.example.com/login/fb
+    service_domain = https://www.example.com
 
-----
 
-Login call
+### Login call ###
 
-----
 
 Request: `GET <auth_endpoint>?state=<my_path>`
 
@@ -65,7 +63,7 @@ Response: `302 Redirect` -> will redirect user to the provider Oauth2 flow
 
 Redirect End: User will be returned to: `<service_domain><my_path>?account=<account_id>:<user_id>`
 
-Example:
+#### Example ####
 
 Request: `GET https://auth.example.com/login/fb?state=/ui`
 
@@ -82,11 +80,7 @@ After redirect is ended two cookies will be set in the browser:
 
 You can retrieve `storage` cookie with Javascript, you cannot retreive `session` cookie, by design.
 
-----
-
-Get Profile call
-
-----
+### Get Profile call ###
 
 Request: `GET <auth_endpoint_domain>/profile`
 
@@ -103,13 +97,12 @@ Responses:
            "auth": "plaintext:<user_authorization_key>"
 	}
 ~~~~~
-
   - `401` -> user is unathorized for the operation (cookies expired?), `prompt to re-login`.
   - `404` -> user never logged in before, call `Update Profile`.
   - `402` -> user is not in whitelist, prompt user to enter `invite token`, otherwise - access denied.
   - `409` -> user account was created with different auth provider (ex. created with Google, and user is logged in with Facebook), `prompt to re-login`.
 
-Example:
+#### Example ####
 
 Request: `GET https://auth.example.com/profile`
 
@@ -124,20 +117,17 @@ Response:
       "auth": "plaintext:aaaa-bbbb-cccc-dddd"
     }
 
-----
 
-Update Profile call
-
-----
+### Update Profile call ###
 
 Request: `PUT <auth_endpoint_domain>/profile`
 
-Optional headers:
+#### Optional headers ####
 
   - `X-Auth-User-Key`: `string` - user can set `<user_authorization_key>` here, or get a random one (if unset).
   - `X-Auth-Invite-Code`: `string` - user can send an `invite token` here, if has one.
 
-Responses:
+#### Responses ####
 
   - `201` -> profile was created, proceed to `Get Profile` call.
   - `202` -> same as above.
@@ -145,11 +135,11 @@ Responses:
   - `403` -> user is forbidden for the operation, access denied, may try to re-login.
   - `500` -> internal server error, may try to re-login.
 
-Example:
+#### Example ####
 
 Request: `PUT https://auth.example.com/profile`
 
-Headers: 
+#### Headers ####
 
 `X-Auth-User-Key: my_secret_password!!!1111`
 
