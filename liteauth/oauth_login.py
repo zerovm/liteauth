@@ -50,7 +50,9 @@ class OauthLogin(object):
 
     def handle_login(self, req, code, state):
         self.storage_driver = LiteAuthStorage(req.environ)
-        oauth_client = self.provider.create_for_token(self.conf, code)
+        oauth_client = self.provider.create_for_token(self.conf,
+                                                      self.auth_endpoint,
+                                                      code)
         token = oauth_client.access_token
         if not token:
             req.response = HTTPUnauthorized(request=req)
@@ -78,6 +80,7 @@ class OauthLogin(object):
     def handle_oauth(self, state=None, approval_prompt='auto'):
         oauth_client = self.provider.create_for_redirect(
             self.conf,
+            self.auth_endpoint,
             state=state,
             approval_prompt=approval_prompt)
         return HTTPFound(location=oauth_client.redirect)

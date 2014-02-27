@@ -162,11 +162,10 @@ class LiteAuth(object):
         self.metadata_key = conf.get('metadata_key', 'userdata').lower()
         self.redirect_url = '%s%s' % (self.service_endpoint, self.auth_path)
         self.provider = load_provider(conf.get('oauth_provider', 'google_oauth'))
-        self.prefix = self.provider.PREFIX
 
     def __call__(self, env, start_response):
         req = Request(env)
-        self.storage_driver = LiteAuthStorage(env, self.prefix)
+        self.storage_driver = LiteAuthStorage(env)
         if req.path.startswith(self.auth_path):
             state = None
             if req.params:
@@ -230,6 +229,7 @@ class LiteAuth(object):
     def do_google_oauth(self, state=None, approval_prompt='auto'):
         oauth_client = self.provider.create_for_redirect(
             self.conf,
+            self.redirect_url,
             state=state,
             approval_prompt=approval_prompt)
         return HTTPFound(location=oauth_client.redirect)
@@ -247,7 +247,9 @@ class LiteAuth(object):
                                             % (self.service_endpoint, state)})
             req.response = resp
             return resp
-        oauth_client = self.provider.create_for_token(self.conf, code)
+        oauth_client = self.provider.create_for_token(self.conf,
+                                                      self.redirect_url,
+                                                      code)
         token = oauth_client.access_token
         if not token:
             req.response = HTTPUnauthorized()
@@ -256,7 +258,7 @@ class LiteAuth(object):
         if not user_info:
             req.response = HTTPForbidden()
             return req.response
-        account_id = self.prefix + user_info.get('id')
+        account_id = self.provider.PREFIX + user_info.get('id')
         self.storage_driver.store_id(account_id,
                                      oauth_client.access_token,
                                      oauth_client.expires_in)
@@ -347,7 +349,9 @@ class LiteAuth(object):
             rtoken = user_data.get('rtoken', None)
             if not rtoken:
                 return None
-            oauth_client = self.provider.create_for_refresh(self.conf, rtoken)
+            oauth_client = self.provider.create_for_refresh(self.conf,
+                                                            self.redirect_url,
+                                                            rtoken)
             headers = {
                 'X-Auth-Token': oauth_client.access_token,
                 'X-Auth-Token-Expires': oauth_client.expires_in,
