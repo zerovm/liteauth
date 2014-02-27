@@ -77,23 +77,19 @@ class LiteAuthToken(object):
                 if path_parts.scheme == 'https':
                     secure = True
                 if auth_token and domain:
-                    new_headers = []
-                    for k, v in response_headers:
-                        new_headers.append((k, v))
                     new_cookie = create_auth_cookie('session',
                                                     domain,
                                                     token=auth_token,
                                                     expires_in=expires_in,
                                                     secure=secure,
                                                     httponly=True)
-                    new_headers.append(('Set-Cookie', new_cookie))
+                    response_headers.append(('Set-Cookie', new_cookie))
                     new_cookie = create_auth_cookie('storage',
                                                     domain,
                                                     token=quote(storage_url, safe=''),
                                                     expires_in=expires_in,
                                                     secure=secure)
-                    new_headers.append(('Set-Cookie', new_cookie))
-                    return start_response(status, new_headers, exc_info)
+                    response_headers.append(('Set-Cookie', new_cookie))
             return start_response(status, response_headers, exc_info)
 
         return self.app(env, cookie_resp)
