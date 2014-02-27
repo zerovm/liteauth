@@ -12,7 +12,6 @@ class OauthLogin(object):
         self.logger = get_logger(conf, log_route='liteauth')
         self.provider = load_provider(
             conf.get('oauth_provider', 'google_oauth'))
-        self.prefix = self.provider.PREFIX
         self.auth_endpoint = conf.get('auth_endpoint', '')
         if not self.auth_endpoint:
             raise ValueError('auth_endpoint not set in config file')
@@ -50,7 +49,7 @@ class OauthLogin(object):
         return self.app
 
     def handle_login(self, req, code, state):
-        self.storage_driver = LiteAuthStorage(req.environ, self.prefix)
+        self.storage_driver = LiteAuthStorage(req.environ)
         oauth_client = self.provider.create_for_token(self.conf, code)
         token = oauth_client.access_token
         if not token:
@@ -60,7 +59,7 @@ class OauthLogin(object):
         if not user_info:
             req.response = HTTPForbidden(request=req)
             return req.response
-        account_id = '%s:%s' % (self.prefix + user_info.get('id'),
+        account_id = '%s:%s' % (self.provider.PREFIX + user_info.get('id'),
                                 user_info.get('email'))
         self.storage_driver.store_id(account_id,
                                      token,

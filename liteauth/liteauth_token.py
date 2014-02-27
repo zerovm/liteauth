@@ -50,8 +50,6 @@ class LiteAuthToken(object):
         self.conf = conf
         self.logger = get_logger(conf, log_route='lite-auth')
         self.storage_driver = conf.get('storage_driver', LiteAuthStorage)
-        provider = load_provider(conf.get('oauth_provider', 'google_oauth'))
-        self.prefix = provider.PREFIX
         self.cookie_key = conf.get('cookie_key', 'session')
 
     def __call__(self, env, start_response):
@@ -61,7 +59,7 @@ class LiteAuthToken(object):
                                               ('x-auth-token', 'x-storage-token'))
         if token:
             account_id, _junk = \
-                self.storage_driver(env, self.prefix).get_id(token)
+                self.storage_driver(env).get_id(token)
             if account_id:
                 req.environ['REMOTE_USER'] = account_id
 

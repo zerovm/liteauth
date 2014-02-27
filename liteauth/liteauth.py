@@ -108,11 +108,11 @@ def store_account_in_whitelist(whitelist_url, app, email, account_id, env):
 
 
 class LiteAuthStorage(object):
-    def __init__(self, env, prefix):
+    def __init__(self, env):
         self.cache = cache_from_env(env)
         if not self.cache:
             raise Exception('Memcache required')
-        self.prefix = prefix
+        self.prefix = 'l_'
 
     def get_id(self, token):
         account_id = None
