@@ -1,7 +1,7 @@
 from urllib import quote
 from uuid import uuid4
 from swift.common.swob import Request, HTTPUnauthorized, \
-    HTTPForbidden, wsgify, Response, HTTPInternalServerError
+    HTTPForbidden, wsgify, Response, HTTPInternalServerError, HTTPConflict
 from swift.common.utils import get_logger
 from swift.common.wsgi import make_pre_authed_request
 
@@ -138,6 +138,10 @@ class SwauthManager(object):
                                          user_id,
                                          req.environ):
                     return HTTPInternalServerError(request=req)
+            elif whitelist_id != user_id:
+                # user subscribed to the service already
+                # but using a different auth provider
+                return HTTPConflict(request=req)
             if req.method == 'GET':
                 return self.get_swauth(req, user_id, user_email)
             elif req.method == 'PUT':
