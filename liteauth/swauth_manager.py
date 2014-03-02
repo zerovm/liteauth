@@ -55,7 +55,7 @@ class SwauthManager(object):
         self.profile_path = 'profile'
         self.provider = load_provider('swauth',
                                       'SwauthClient',
-                                      'could not load SwauthClient')
+                                      'could not load SwauthClient')(conf)
         # url for whitelist objects
         # Example: /v1/liteauth/whitelist
         self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')

@@ -19,7 +19,7 @@ class SharedContainersMiddleware(object):
         self.logger = get_logger(conf, log_route='lite-auth')
         self.metadata_key = conf.get('metadata_key', 'shared').lower()
         self.provider = load_provider('swauth', 'SwauthClient',
-                                      'could not load SwauthClient')
+                                      'could not load SwauthClient')(conf)
         self.shared_max = int(conf.get('max_shared_containers', 20))
 
     @wsgify
