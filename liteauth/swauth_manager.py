@@ -1,6 +1,6 @@
 from urllib import quote
-from uuid import uuid4
-from swift.common.swob import Request, HTTPUnauthorized, \
+from providers import load_provider
+from swift.common.swob import HTTPUnauthorized, \
     HTTPForbidden, wsgify, Response, HTTPInternalServerError, HTTPConflict
 from swift.common.utils import get_logger
 from swift.common.wsgi import make_pre_authed_request
@@ -53,22 +53,9 @@ class SwauthManager(object):
         self.conf = conf
         self.logger = get_logger(conf, log_route='lite-swauth')
         self.profile_path = 'profile'
-        self.super_admin_key = conf.get('super_admin_key')
-        if not self.super_admin_key:
-            msg = 'No super_admin_key set in conf file; ' \
-                  'Swauth administration features will be disabled.'
-            try:
-                self.logger.warn(msg)
-            except Exception:
-                pass
-        self.auth_prefix = conf.get('auth_prefix', '/auth/')
-        if not self.auth_prefix:
-            self.auth_prefix = '/auth/'
-        if self.auth_prefix[0] != '/':
-            self.auth_prefix = '/' + self.auth_prefix
-        if self.auth_prefix[-1] != '/':
-            self.auth_prefix += '/'
-        self.version = 'v2'
+        self.provider = load_provider('swauth',
+                                      'SwauthClient',
+                                      'could not load SwauthClient')
         # url for whitelist objects
         # Example: /v1/liteauth/whitelist
         self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
@@ -82,7 +69,7 @@ class SwauthManager(object):
 
     @wsgify
     def __call__(self, req):
-        if not self.super_admin_key:  # profile management is disabled
+        if self.provider.is_disabled():  # profile management is disabled
             return self.denied_response(req)
         try:
             (endpoint, _rest) = req.split_path(1, 2, True)
@@ -144,48 +131,17 @@ class SwauthManager(object):
                 # but using a different auth provider
                 return HTTPConflict(request=req)
             if req.method == 'GET':
-                return self.get_swauth(req, user_id, user_email)
+                return self.provider.get_user(self.app,
+                                              req,
+                                              user_id,
+                                              user_email)
             elif req.method == 'PUT':
-                return self.put_swauth(req, user_id, user_email, new_service)
+                return self.provider.put_user(self.app,
+                                              req,
+                                              user_id,
+                                              user_email,
+                                              service=new_service)
         return self.denied_response(req)
-
-    def get_swauth(self, req, user_id, user_email):
-        swauth_req = Request.blank('%s%s/%s/%s' % (self.auth_prefix,
-                                                   self.version,
-                                                   user_email,
-                                                   user_id),
-                                   headers={'x-auth-admin-user': '.super_admin',
-                                            'x-auth-admin-key': self.super_admin_key})
-        copy_env(req, swauth_req)
-        resp = swauth_req.get_response(self.app)
-        return resp
-
-    def put_swauth(self, req, user_id, user_email, service=None):
-        user_key = req.headers.get('x-auth-user-key', str(uuid4()))
-        swauth_req = Request.blank('%s%s/%s' % (self.auth_prefix,
-                                                self.version,
-                                                user_email),
-                                   headers={'x-auth-admin-user': '.super_admin',
-                                            'x-auth-admin-key': self.super_admin_key})
-        swauth_req.method = 'PUT'
-        copy_env(req, swauth_req)
-        resp = swauth_req.get_response(self.app)
-        if not resp.status_int // 100 == 2:
-            return resp
-        swauth_req = Request.blank('%s%s/%s/%s' % (self.auth_prefix,
-                                                   self.version,
-                                                   user_email,
-                                                   user_id),
-                                   headers={'x-auth-admin-user': '.super_admin',
-                                            'x-auth-admin-key': self.super_admin_key,
-                                            'x-auth-user-key': user_key,
-                                            'x-auth-user-admin': 'true'})
-        swauth_req.method = 'PUT'
-        copy_env(req, swauth_req)
-        if service:
-            swauth_req.environ['liteauth.new_service'] = service
-        resp = swauth_req.get_response(self.app)
-        return resp
 
     def denied_response(self, req):
         if req.remote_user:

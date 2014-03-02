@@ -1,7 +1,12 @@
-from liteauth.liteauth import retrieve_metadata, store_metadata
-from liteauth.swauth_manager import copy_env
-from swift.common.swob import wsgify, HTTPBadRequest, HTTPUnauthorized, HTTPNotFound, Response, Request
+from liteauth import retrieve_metadata, store_metadata
+from providers import load_provider
+from swift.common.swob import wsgify, HTTPBadRequest, HTTPUnauthorized, HTTPNotFound, Response, Request, \
+    HTTPRequestEntityTooLarge
 from swift.common.utils import get_logger
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 
 class SharedContainersMiddleware(object):
@@ -13,23 +18,9 @@ class SharedContainersMiddleware(object):
         self.version = 'v1'
         self.logger = get_logger(conf, log_route='lite-auth')
         self.metadata_key = conf.get('metadata_key', 'shared').lower()
-
-        self.super_admin_key = conf.get('super_admin_key')
-        if not self.super_admin_key:
-            msg = 'No super_admin_key set in conf file; ' \
-                  'Swauth administration features will be disabled.'
-            try:
-                self.logger.warn(msg)
-            except Exception:
-                pass
-        self.auth_prefix = conf.get('auth_prefix', '/auth/')
-        if not self.auth_prefix:
-            self.auth_prefix = '/auth/'
-        if self.auth_prefix[0] != '/':
-            self.auth_prefix = '/' + self.auth_prefix
-        if self.auth_prefix[-1] != '/':
-            self.auth_prefix += '/'
-        self.version = 'v2'
+        self.provider = load_provider('swauth', 'SwauthClient',
+                                      'could not load SwauthClient')
+        self.shared_max = int(conf.get('max_shared_containers', 20))
 
     @wsgify
     def __call__(self, request):
@@ -53,7 +44,10 @@ class SharedContainersMiddleware(object):
         if not groups:
             return HTTPUnauthorized(request=request)
         remote_user_name = 'shared'
-
+        user_data = self.provider.get_account(self.app, request, shared_account)
+        if user_data:
+            remote_user_name = shared_account
+            shared_account = user_data['account_id']
         account_id = groups[-1]
         shared = retrieve_metadata(self.app, self.version,
                                    account_id, self.metadata_key,
@@ -68,6 +62,9 @@ class SharedContainersMiddleware(object):
             except KeyError:
                 return HTTPNotFound(body='Could not remove shared container %s/%s'
                                          % (shared_account, shared_container))
+        if len(shared) > self.shared_max:
+            return HTTPRequestEntityTooLarge(request=request,
+                                             body='Max number of shared containers reached')
         if store_metadata(self.app, self.version,
                           account_id, self.metadata_key,
                           shared, request.environ):
@@ -75,17 +72,6 @@ class SharedContainersMiddleware(object):
                                  % (shared_account, shared_container))
         return HTTPNotFound(body='Could not handle shared container %s/%s'
                                  % (shared_account, shared_container))
-
-    def get_swauth(self, req, user_id, user_email):
-        swauth_req = Request.blank('%s%s/%s/%s' % (self.auth_prefix,
-                                                   self.version,
-                                                   user_id,
-                                                   user_email),
-                                   headers={'x-auth-admin-user': '.super_admin',
-                                            'x-auth-admin-key': self.super_admin_key})
-        copy_env(req, swauth_req)
-        resp = swauth_req.get_response(self.app)
-        return resp
 
 
 def filter_factory(global_conf, **local_conf):

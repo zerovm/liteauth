@@ -1,7 +1,7 @@
 from urllib import quote
 from time import time
 from hashlib import md5
-from providers.abstract_oauth import load_provider
+from providers import load_oauth_provider
 
 from swift.common.constraints import MAX_META_VALUE_LENGTH
 from swift.common.middleware.acl import clean_acl
@@ -161,7 +161,7 @@ class LiteAuth(object):
         self.storage_driver = None
         self.metadata_key = conf.get('metadata_key', 'userdata').lower()
         self.redirect_url = '%s%s' % (self.service_endpoint, self.auth_path)
-        self.provider = load_provider(conf.get('oauth_provider', 'google_oauth'))
+        self.provider = load_oauth_provider(conf.get('oauth_provider', 'google_oauth'))
 
     def __call__(self, env, start_response):
         req = Request(env)

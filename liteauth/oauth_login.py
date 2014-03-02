@@ -1,5 +1,5 @@
 from liteauth import LiteAuthStorage
-from providers.abstract_oauth import load_provider
+from providers import load_oauth_provider
 from swift.common.swob import wsgify, HTTPUnauthorized, HTTPForbidden, Response, HTTPFound
 from swift.common.utils import get_logger, urlparse
 
@@ -10,7 +10,7 @@ class OauthLogin(object):
         self.app = app
         self.conf = conf
         self.logger = get_logger(conf, log_route='liteauth')
-        self.provider = load_provider(
+        self.provider = load_oauth_provider(
             conf.get('oauth_provider', 'google_oauth'))
         self.auth_endpoint = conf.get('auth_endpoint', '')
         if not self.auth_endpoint:

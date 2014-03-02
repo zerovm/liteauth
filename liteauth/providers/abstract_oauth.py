@@ -46,12 +46,3 @@ class OauthClientInterface(object):
                                        and `expires_in`  set
         """
         raise NotImplementedError
-
-
-def load_provider(name):
-    try:
-        mod = __import__('liteauth.providers.' + name, fromlist=['Client'])
-        provider = getattr(mod, 'Client')
-        return provider
-    except Exception:
-        raise ValueError('oauth_provider is invalid in config file')
