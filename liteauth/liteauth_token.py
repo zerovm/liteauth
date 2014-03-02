@@ -1,8 +1,6 @@
 from Cookie import SimpleCookie
 from urllib import quote
 import datetime
-from liteauth import LiteAuthStorage
-from providers.abstract_oauth import load_provider
 from swift.common.swob import Request, HeaderKeyDict
 from swift.common.utils import get_logger, urlparse
 
