@@ -5,6 +5,9 @@ LiteStack authentication middlewares
 
 # Swauth integrated API
 
+**After long battle with Swauth it was decided to use e-mail address as `<account_id>`.**
+All because Swauth has no clear way to map from user name to `account_prefix`, pity.
+
 ## Config
 
 	[filter:liteauth-token]
@@ -69,7 +72,7 @@ Request: `GET https://auth.example.com/login/fb?state=/ui`
 
 Response: `302 Redirect` -> will redirect user to the provider Oauth2 flow
 
-Redirect End: User will be returned to: `https://www.example.com/ui?account=fb_1111111:me@example.com`
+Redirect End: User will be returned to: `https://www.example.com/ui?account=me@example.com:fb_1111111`
 
 ----
 
@@ -110,8 +113,8 @@ Response:
 
     {
       "groups": [
-        { "name": "g_11111111:me@example.com" },
-        { "name": "g_11111111" },
+        { "name": "me@example.com:g_11111111" },
+        { "name": "me@example.com" },
         { "name": ".admin"}
       ],
       "auth": "plaintext:aaaa-bbbb-cccc-dddd"
