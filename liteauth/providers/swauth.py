@@ -88,7 +88,7 @@ class SwauthClient(object):
         resp = swauth_req.get_response(app)
         return resp
 
-    def is_enabled(self):
+    def is_disabled(self):
         if self.super_admin_key:
             return False
         return True
