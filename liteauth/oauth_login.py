@@ -38,6 +38,7 @@ class OauthLogin(object):
 
     @wsgify
     def __call__(self, req):
+        self.storage_driver = LiteAuthStorage(req.environ)
         if req.path == self.login_path:
             state = None
             if req.params:
@@ -46,10 +47,14 @@ class OauthLogin(object):
                 if code:
                     return self.handle_login(req, code, state)
             return self.handle_oauth(state)
+        token = req.headers.get('x-auth-token', None)
+        if token:
+            account_id, _junk = self.storage_driver.get_id(token)
+            if account_id:
+                req.environ['REMOTE_USER'] = account_id
         return self.app
 
     def handle_login(self, req, code, state):
-        self.storage_driver = LiteAuthStorage(req.environ)
         oauth_client = self.provider.create_for_token(self.conf,
                                                       self.auth_endpoint,
                                                       code)

@@ -89,6 +89,7 @@ class SwauthManager(object):
         except ValueError:
             return self.denied_response(req)
         if endpoint == self.profile_path:
+            new_service = None
             account_id = req.environ.get('REMOTE_USER', '')
             if not account_id:
                 return HTTPUnauthorized(request=req)
@@ -130,7 +131,7 @@ class SwauthManager(object):
                 return Response(request=req, status=402,
                                 body='Account not in whitelist')
             if whitelist_id.startswith('service_'):
-                req.environ['liteauth.new_service'] = \
+                new_service = \
                     whitelist_id.replace('service_', '', 1)
                 if not store_data_in_url(self.whitelist_url,
                                          self.app,
@@ -145,25 +146,25 @@ class SwauthManager(object):
             if req.method == 'GET':
                 return self.get_swauth(req, user_id, user_email)
             elif req.method == 'PUT':
-                return self.put_swauth(req, user_id, user_email)
+                return self.put_swauth(req, user_id, user_email, new_service)
         return self.denied_response(req)
 
     def get_swauth(self, req, user_id, user_email):
         swauth_req = Request.blank('%s%s/%s/%s' % (self.auth_prefix,
                                                    self.version,
-                                                   user_id,
-                                                   user_email),
+                                                   user_email,
+                                                   user_id),
                                    headers={'x-auth-admin-user': '.super_admin',
                                             'x-auth-admin-key': self.super_admin_key})
         copy_env(req, swauth_req)
         resp = swauth_req.get_response(self.app)
         return resp
 
-    def put_swauth(self, req, user_id, user_email):
+    def put_swauth(self, req, user_id, user_email, service=None):
         user_key = req.headers.get('x-auth-user-key', str(uuid4()))
         swauth_req = Request.blank('%s%s/%s' % (self.auth_prefix,
                                                 self.version,
-                                                user_id),
+                                                user_email),
                                    headers={'x-auth-admin-user': '.super_admin',
                                             'x-auth-admin-key': self.super_admin_key})
         swauth_req.method = 'PUT'
@@ -173,14 +174,16 @@ class SwauthManager(object):
             return resp
         swauth_req = Request.blank('%s%s/%s/%s' % (self.auth_prefix,
                                                    self.version,
-                                                   user_id,
-                                                   user_email),
+                                                   user_email,
+                                                   user_id),
                                    headers={'x-auth-admin-user': '.super_admin',
                                             'x-auth-admin-key': self.super_admin_key,
                                             'x-auth-user-key': user_key,
                                             'x-auth-user-admin': 'true'})
         swauth_req.method = 'PUT'
         copy_env(req, swauth_req)
+        if service:
+            swauth_req.environ['liteauth.new_service'] = service
         resp = swauth_req.get_response(self.app)
         return resp
 
