@@ -163,7 +163,7 @@ class LiteQuota(object):
         while config:
             req.headers['x-account-meta-%s%d' % (self.metadata_key, i)] = \
                 config[:MAX_META_VALUE_LENGTH]
-            user_data = config[MAX_META_VALUE_LENGTH:]
+            config = config[MAX_META_VALUE_LENGTH:]
             i += 1
         resp = req.get_response(self.app)
         if not is_success(resp.status_int):
