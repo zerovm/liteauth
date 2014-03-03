@@ -130,6 +130,7 @@ class SwauthManager(object):
                 # user subscribed to the service already
                 # but using a different auth provider
                 return HTTPConflict(request=req)
+            print ['new_service_manager', new_service]
             if req.method == 'GET':
                 return self.provider.get_user(self.app,
                                               req,
