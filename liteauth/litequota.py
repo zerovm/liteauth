@@ -2,6 +2,7 @@ from liteauth import assemble_from_partial, store_metadata
 from swift.common.http import is_success
 from swift.common.swob import Request, HTTPRequestEntityTooLarge, HTTPInternalServerError
 from swift.common.utils import get_logger, TRUE_VALUES
+from swift.common.wsgi import make_pre_authed_request
 from swift.proxy.controllers.base import get_account_info, get_container_info, get_object_info
 
 try:
@@ -128,9 +129,13 @@ class LiteQuota(object):
                                 'and user requests service %s'
                                 % service)
             return False
-        req = Request.blank('%s/%s' % (self.services_url, service))
-        req.method = 'GET'
-        req.environ['swift.cache'] = env['swift.cache']
+        req = make_pre_authed_request(env,
+                                      method='GET',
+                                      path='%s/%s' % (self.services_url, service),
+                                      swift_source='litequota')
+        # req = Request.blank('%s/%s' % (self.services_url, service))
+        # req.method = 'GET'
+        # req.environ['swift.cache'] = env['swift.cache']
         resp = req.get_response(self.app)
         if not is_success(resp.status_int):
             self.logger.error('Error getting service object: %s %s %s'
