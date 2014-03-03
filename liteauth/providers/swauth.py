@@ -50,7 +50,7 @@ class SwauthClient(object):
             return None
         return data
 
-    def get_user(self, app, req, user_id, user_email):
+    def get_user(self, app, req, user_id, user_email, service=None):
         swauth_req = Request.blank('%s%s/%s/%s' % (self.auth_prefix,
                                                    self.version,
                                                    user_email,
@@ -58,6 +58,8 @@ class SwauthClient(object):
                                    headers={'x-auth-admin-user': '.super_admin',
                                             'x-auth-admin-key': self.super_admin_key})
         copy_env(req, swauth_req)
+        if service:
+            swauth_req.environ['liteauth.new_service'] = service
         resp = swauth_req.get_response(app)
         return resp
 

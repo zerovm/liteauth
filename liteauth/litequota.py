@@ -45,6 +45,7 @@ class LiteQuota(object):
     def __call__(self, env, start_response):
         req = Request(env)
         new_service = env.get('liteauth.new_service', None)
+        print ['new_service', new_service]
         if new_service:
             account_name = req.split_path(2, 4, rest_with_last=True)[2]
             if not self.activate_service(account_name, new_service, req.environ):
@@ -147,6 +148,7 @@ class LiteQuota(object):
         container_info = get_container_info(req.environ, self.app,
                                             swift_source='litequota')
         account_id = container_info['meta']['account-id']
+        print ['activate_service', account_name, service, account_id]
         if not store_metadata(self.app, self.version, account_id,
                               self.metadata_key, config, env):
             return False

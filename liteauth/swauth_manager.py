@@ -134,7 +134,8 @@ class SwauthManager(object):
                 return self.provider.get_user(self.app,
                                               req,
                                               user_id,
-                                              user_email)
+                                              user_email,
+                                              service=new_service)
             elif req.method == 'PUT':
                 return self.provider.put_user(self.app,
                                               req,
