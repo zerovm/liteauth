@@ -1,4 +1,5 @@
 from liteauth import assemble_from_partial, store_metadata
+from swift.common.constraints import MAX_META_VALUE_LENGTH
 from swift.common.http import is_success
 from swift.common.swob import Request, HTTPRequestEntityTooLarge, HTTPInternalServerError
 from swift.common.utils import get_logger, TRUE_VALUES
@@ -142,7 +143,7 @@ class LiteQuota(object):
                               % (req.path, resp.status, resp.body))
             return False
         try:
-            config = json.loads(resp.body)
+            config = json.dumps(json.loads(resp.body))
         except Exception:
             self.logger.error('Error loading service object: %s %s %s'
                               % (req.path, resp.status, resp.body))
@@ -154,9 +155,24 @@ class LiteQuota(object):
                                             swift_source='litequota')
         account_id = container_info['meta']['account-id']
         print ['activate_service', account_name, service, account_id]
-        if not store_metadata(self.app, self.version, account_id,
-                              self.metadata_key, config, env):
+        req = make_pre_authed_request(env,
+                                      method='POST',
+                                      path='/%s/%s' % (self.version, account_id),
+                                      swift_source='litequota')
+        i = 0
+        while config:
+            req.headers['x-account-meta-%s%d' % (self.metadata_key, i)] = \
+                config[:MAX_META_VALUE_LENGTH]
+            user_data = config[MAX_META_VALUE_LENGTH:]
+            i += 1
+        resp = req.get_response(self.app)
+        if not is_success(resp.status_int):
+            self.logger.error('Error storing service object in account: %s %s %s'
+                              % (req.path, resp.status, resp.body))
             return False
+        # if not store_metadata(self.app, self.version, account_id,
+        #                       self.metadata_key, config, env):
+        #     return False
         return True
 
 
