@@ -69,7 +69,7 @@ class LiteQuota(object):
         except ValueError:
             return self.app(env, start_response)
         if not service_plan:
-            service_plan = self.set_serviceplan(account_info)
+            service_plan = self.set_serviceplan(req, account_info)
             if not service_plan:
                 return self.app(env, start_response)
         try:
@@ -179,7 +179,8 @@ class LiteQuota(object):
         #     return False
         return True
 
-    def set_serviceplan(self, account_info):
+    def set_serviceplan(self, req, account_info):
+        print req.environ
         print account_info
         return None
 
