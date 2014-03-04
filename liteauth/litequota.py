@@ -46,14 +46,13 @@ class LiteQuota(object):
 
     def __call__(self, env, start_response):
         req = Request(env)
-        new_service = env.get('liteauth.new_service', None)
-        print ['new_service', new_service]
-        if new_service:
-            account_name = req.split_path(2, 4, rest_with_last=True)[2]
-            if not self.activate_service(account_name, new_service, req.environ):
-                    return HTTPInternalServerError()
-            del env['liteauth.new_service']
-            return self.app(env, start_response)
+        # new_service = env.get('liteauth.new_service', None)
+        # if new_service:
+        #     account_name = req.split_path(2, 4, rest_with_last=True)[2]
+        #     if not self.activate_service(account_name, new_service, req.environ):
+        #             return HTTPInternalServerError()
+        #     del env['liteauth.new_service']
+        #     return self.app(env, start_response)
         # We want to check POST here also
         # it can possibly have content_length > 0
         if not self.enforce_quota or req.method not in ("POST", "PUT", "COPY"):
@@ -64,12 +63,17 @@ class LiteQuota(object):
             return self.app(env, start_response)
         service_plan = assemble_from_partial(self.metadata_key,
                                              account_info['meta'])
-        if not service_plan:
-            return self.app(env, start_response)
         try:
-            service_plan = json.loads(service_plan)
             ver, account, container, obj = \
                 req.split_path(2, 4, rest_with_last=True)
+        except ValueError:
+            return self.app(env, start_response)
+        if not service_plan:
+            service_plan = self.set_serviceplan(account_info)
+            if not service_plan:
+                return self.app(env, start_response)
+        try:
+            service_plan = json.loads(service_plan)
         except ValueError:
             return self.app(env, start_response)
 
@@ -174,6 +178,10 @@ class LiteQuota(object):
         #                       self.metadata_key, config, env):
         #     return False
         return True
+
+    def set_serviceplan(self, account_info):
+        print account_info
+        return None
 
 
 def filter_factory(global_conf, **local_conf):
