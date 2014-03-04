@@ -38,6 +38,9 @@ class LiteAccountingContext(WSGIContext):
         resp = self._app_call(env)
         headers = HeaderKeyDict(self._response_headers)
         if 'x-nexe-cdr-line' in headers and account_id:
+            if ',' in account_id:
+                # get first group
+                account_id = account_id.split(',')[0]
             try:
                 total_time, line = headers['x-nexe-cdr-line'].split(', ', 1)
                 node_lines = re.split(r'\s*,\s*', line)
