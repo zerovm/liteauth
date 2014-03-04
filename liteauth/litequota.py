@@ -1,4 +1,5 @@
-from liteauth import assemble_from_partial, store_metadata
+from liteauth import assemble_from_partial
+from swauth_manager import get_data_from_url
 from swift.common.constraints import MAX_META_VALUE_LENGTH
 from swift.common.http import is_success
 from swift.common.swob import Request, HTTPRequestEntityTooLarge, HTTPInternalServerError
@@ -38,22 +39,16 @@ class LiteQuota(object):
         self.metadata_key = conf.get('metadata_key', 'serviceplan').lower()
         # url for service objects
         self.services_url = conf.get('services_url', '').lower().rstrip('/')
-        self.reseller_prefix = conf.get('reseller_prefix', 'AUTH').strip()
-        if self.reseller_prefix and self.reseller_prefix[-1] != '_':
-            self.reseller_prefix += '_'
-        self.auth_account = '%s.auth' % self.reseller_prefix
+        # url for whitelist objects
+        # Example: /v1/liteauth/whitelist
+        self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
+        if not self.whitelist_url:
+            raise ValueError('whitelist_url not set in config file')
         self.enforce_quota = conf.get('enforce_quota', 't').lower() in TRUE_VALUES
 
     def __call__(self, env, start_response):
         req = Request(env)
-        # new_service = env.get('liteauth.new_service', None)
-        # if new_service:
-        #     account_name = req.split_path(2, 4, rest_with_last=True)[2]
-        #     if not self.activate_service(account_name, new_service, req.environ):
-        #             return HTTPInternalServerError()
-        #     del env['liteauth.new_service']
-        #     return self.app(env, start_response)
-        # We want to check POST here also
+        # We want to check POST here
         # it can possibly have content_length > 0
         if not self.enforce_quota or req.method not in ("POST", "PUT", "COPY"):
             return self.app(env, start_response)
@@ -68,24 +63,103 @@ class LiteQuota(object):
                 req.split_path(2, 4, rest_with_last=True)
         except ValueError:
             return self.app(env, start_response)
+        if not service_plan and req.method == 'PUT' and not obj:
+            service_plan = self.set_serviceplan(req, account)
         if not service_plan:
-            service_plan = self.set_serviceplan(req, account_info)
-            if not service_plan:
-                return self.app(env, start_response)
+            return self.app(env, start_response)
         try:
             service_plan = json.loads(service_plan)
         except ValueError:
             return self.app(env, start_response)
 
+        if service_plan.get('storage', None):
+            resp = self.apply_storage_quota(req, service_plan['storage'],
+                                            account_info,
+                                            ver, account, container, obj)
+            if resp:
+                return resp(env, start_response)
+        return self.app(env, start_response)
+
+    def set_serviceplan(self, req, account_id):
+        groups = req.remote_user
+        if not groups:
+            return None
+        user_email = None
+        for group in groups.split(','):
+            if ':' in group:
+                user_email, user_id = group.split(':')
+                break
+        if not user_email:
+            return None
+        # We do not want to accidentally set service plan
+        # of one user on another user account
+        if groups.split(',')[-1] != account_id:
+            return None
+        whitelist_data = get_data_from_url(self.whitelist_url,
+                                           self.app,
+                                           user_email,
+                                           self.logger,
+                                           req.environ)
+        if not whitelist_data:
+            return None
+        try:
+            service = json.loads(whitelist_data).get('service', None)
+        except Exception:
+            return HTTPInternalServerError(request=req)
+        service_plan_data = {}
+        for service_type, service_name in service.iteritems():
+            if not self.services_url:
+                self.logger.warning('No services url found in config, '
+                                    'and user requests service: %s'
+                                    % service_name)
+                return None
+            req = make_pre_authed_request(req.environ,
+                                          method='GET',
+                                          path='%s/%s'
+                                               % (self.services_url, service_name),
+                                          swift_source='litequota')
+            resp = req.get_response(self.app)
+            if not is_success(resp.status_int):
+                self.logger.error('Error getting service object: %s %s %s'
+                                  % (req.path, resp.status, resp.body))
+                return None
+            try:
+                service_data = json.loads(resp.body)
+            except Exception:
+                self.logger.error('Error loading service object: %s %s %s'
+                                  % (req.path, resp.status, resp.body))
+                return None
+            service_plan_data[service_type] = service_data
+        print service_plan_data
+        req = make_pre_authed_request(req.environ,
+                                      method='POST',
+                                      path='/%s/%s' % (self.version, account_id),
+                                      swift_source='litequota')
+        config = json.dumps(service_plan_data)
+        i = 0
+        while config:
+            req.headers['x-account-meta-%s%d' % (self.metadata_key, i)] = \
+                config[:MAX_META_VALUE_LENGTH]
+            config = config[MAX_META_VALUE_LENGTH:]
+            i += 1
+        resp = req.get_response(self.app)
+        if not is_success(resp.status_int):
+            self.logger.error('Error storing service object in account: %s %s %s'
+                              % (req.path, resp.status, resp.body))
+            return None
+        return json.dumps(service_plan_data)
+
+    def apply_storage_quota(self, req, service_plan, account_info,
+                            ver, account, container, obj):
         if not obj:
-            quota = service_plan['storage']['containers']
+            quota = service_plan['containers']
             # If "number of containers" = (quota + 1): deny PUT
-            # We don't want to deny overwrite of the N-th container
+            # We don't want to deny overwrite of the last container
             new_size = int(account_info['container_count'])
             if 0 <= quota < new_size:
                 return bad_response(
-                    req, None, 'Over quota: containers')(env, start_response)
-            return self.app(env, start_response)
+                    req, None, 'Over quota: containers')
+            return None
 
         content_length = (req.content_length or 0)
         if req.method == 'COPY':
@@ -111,78 +185,21 @@ class LiteQuota(object):
             else:
                 content_length = int(object_info['length'])
         new_size = int(account_info['bytes']) + content_length
-        quota = service_plan['storage']['bytes']
+        quota = service_plan['bytes']
         if 0 <= quota < new_size:
             if not container_info:
                 container_info = get_container_info(req.environ, self.app,
                                                     swift_source='litequota')
             return bad_response(req, container_info, 'Over quota: bytes')
         # If "number of objects" == (quota + 1): deny PUT
-        # We don't want to deny overwrite of the N-th object
+        # We don't want to deny overwrite of the last object
         new_size = int(account_info['total_object_count'])
-        quota = service_plan['storage']['objects']
+        quota = service_plan['objects']
         if 0 <= quota < new_size:
             if not container_info:
                 container_info = get_container_info(req.environ, self.app,
                                                     swift_source='litequota')
             return bad_response(req, container_info, 'Over quota: objects')
-        return self.app(env, start_response)
-
-    def activate_service(self, account_name, service, env):
-        if not self.services_url:
-            self.logger.warning('No services url found in config, '
-                                'and user requests service %s'
-                                % service)
-            return False
-        req = make_pre_authed_request(env,
-                                      method='GET',
-                                      path='%s/%s' % (self.services_url, service),
-                                      swift_source='litequota')
-        # req = Request.blank('%s/%s' % (self.services_url, service))
-        # req.method = 'GET'
-        # req.environ['swift.cache'] = env['swift.cache']
-        resp = req.get_response(self.app)
-        if not is_success(resp.status_int):
-            self.logger.error('Error getting service object: %s %s %s'
-                              % (req.path, resp.status, resp.body))
-            return False
-        try:
-            config = json.dumps(json.loads(resp.body))
-        except Exception:
-            self.logger.error('Error loading service object: %s %s %s'
-                              % (req.path, resp.status, resp.body))
-            return False
-        req = Request(env)
-        req.path_info = '/%s/%s/%s' \
-                        % (self.version, self.auth_account, account_name)
-        container_info = get_container_info(req.environ, self.app,
-                                            swift_source='litequota')
-        account_id = container_info['meta']['account-id']
-        print ['activate_service', account_name, service, account_id]
-        req = make_pre_authed_request(env,
-                                      method='POST',
-                                      path='/%s/%s' % (self.version, account_id),
-                                      swift_source='litequota')
-        i = 0
-        while config:
-            req.headers['x-account-meta-%s%d' % (self.metadata_key, i)] = \
-                config[:MAX_META_VALUE_LENGTH]
-            config = config[MAX_META_VALUE_LENGTH:]
-            i += 1
-        resp = req.get_response(self.app)
-        if not is_success(resp.status_int):
-            self.logger.error('Error storing service object in account: %s %s %s'
-                              % (req.path, resp.status, resp.body))
-            return False
-        # if not store_metadata(self.app, self.version, account_id,
-        #                       self.metadata_key, config, env):
-        #     return False
-        return True
-
-    def set_serviceplan(self, req, account_info):
-        print req.environ
-        print account_info
-        return None
 
 
 def filter_factory(global_conf, **local_conf):

@@ -4,6 +4,10 @@ from swift.common.swob import HTTPUnauthorized, \
     HTTPForbidden, wsgify, Response, HTTPInternalServerError, HTTPConflict
 from swift.common.utils import get_logger
 from swift.common.wsgi import make_pre_authed_request
+try:
+    import simplejson as json
+except ImportError:
+    import json
 
 
 def get_data_from_url(url, app, key, logger, env):
@@ -76,73 +80,80 @@ class SwauthManager(object):
         except ValueError:
             return self.denied_response(req)
         if endpoint == self.profile_path:
-            new_service = None
             account_id = req.environ.get('REMOTE_USER', '')
             if not account_id:
                 return HTTPUnauthorized(request=req)
             user_id, user_email = account_id.split(':')
-            whitelist_id = get_data_from_url(self.whitelist_url,
-                                             self.app,
-                                             user_email,
-                                             self.logger,
-                                             req.environ)
+            whitelist_data = get_data_from_url(self.whitelist_url,
+                                               self.app,
+                                               user_email,
+                                               self.logger,
+                                               req.environ)
             invite_code = req.headers.get('x-auth-invite-code', None)
             if invite_code and req.method == 'PUT':
-                invite_id = get_data_from_url(self.invite_url,
-                                              self.app,
-                                              invite_code,
-                                              self.logger,
-                                              req.environ)
-                if not invite_id:
+                invite_data = get_data_from_url(self.invite_url,
+                                                self.app,
+                                                invite_code,
+                                                self.logger,
+                                                req.environ)
+                if not invite_data or isinstance(invite_data, dict):
                     return self.denied_response(req)
-                service = None
-                if not invite_id.startswith('email:'):
+                try:
+                    invite_data = json.loads(invite_data)
+                except Exception:
+                    return HTTPInternalServerError(request=req)
+                if not invite_data.get('service', None):
+                    return HTTPInternalServerError(request=req)
+                if not invite_data.get('email', None):
+                    invite_data['email'] = user_email
+                    invite_data['user_id'] = user_id
                     if not store_data_in_url(self.invite_url,
                                              self.app,
                                              invite_code,
-                                             'email:%s:%s' % (user_email, invite_id),
+                                             json.dumps(invite_data),
                                              req.environ):
                         return HTTPInternalServerError(request=req)
-                    service = invite_id
-                elif 'email:%s:' % user_email in invite_id:
-                    service = invite_id.split(':', 3)[2]
-                if service and not whitelist_id:
                     if not store_data_in_url(self.whitelist_url,
                                              self.app,
                                              user_email,
-                                             service,
+                                             json.dumps(invite_data),
                                              req.environ):
                         return HTTPInternalServerError(request=req)
-                    whitelist_id = service
-            if not whitelist_id:
-                return Response(request=req, status=402,
-                                body='Account not in whitelist')
-            if whitelist_id.startswith('service_'):
-                new_service = \
-                    whitelist_id.replace('service_', '', 1)
-                if not store_data_in_url(self.whitelist_url,
-                                         self.app,
-                                         user_email,
-                                         user_id,
-                                         req.environ):
+            else:
+                if whitelist_data:
+                    try:
+                        whitelist_data = json.loads(whitelist_data)
+                    except Exception:
+                        return HTTPInternalServerError(request=req)
+                if not whitelist_data or not isinstance(whitelist_data, dict):
+                    return Response(request=req, status=402,
+                                    body='Account not in whitelist')
+                if not whitelist_data.get('service', None):
                     return HTTPInternalServerError(request=req)
-            elif whitelist_id != user_id:
-                # user subscribed to the service already
-                # but using a different auth provider
-                return HTTPConflict(request=req)
-            print ['new_service_manager', new_service]
+                current_user = whitelist_data.get('user_id', None)
+                if not current_user:
+                    whitelist_data['email'] = user_email
+                    whitelist_data['user_id'] = user_id
+                    if not store_data_in_url(self.whitelist_url,
+                                             self.app,
+                                             user_email,
+                                             json.dumps(whitelist_data),
+                                             req.environ):
+                        return HTTPInternalServerError(request=req)
+                elif current_user != user_id:
+                    # user subscribed to the service already
+                    # but used a different auth provider
+                    return HTTPConflict(request=req)
             if req.method == 'GET':
                 return self.provider.get_user(self.app,
                                               req,
                                               user_id,
-                                              user_email,
-                                              service=new_service)
+                                              user_email)
             elif req.method == 'PUT':
                 return self.provider.put_user(self.app,
                                               req,
                                               user_id,
-                                              user_email,
-                                              service=new_service)
+                                              user_email)
         return self.denied_response(req)
 
     def denied_response(self, req):

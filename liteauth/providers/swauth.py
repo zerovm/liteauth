@@ -50,7 +50,7 @@ class SwauthClient(object):
             return None
         return data
 
-    def get_user(self, app, req, user_id, user_email, service=None):
+    def get_user(self, app, req, user_id, user_email):
         swauth_req = Request.blank('%s%s/%s/%s' % (self.auth_prefix,
                                                    self.version,
                                                    user_email,
@@ -58,12 +58,10 @@ class SwauthClient(object):
                                    headers={'x-auth-admin-user': '.super_admin',
                                             'x-auth-admin-key': self.super_admin_key})
         copy_env(req, swauth_req)
-        if service:
-            swauth_req.environ['liteauth.new_service'] = service
         resp = swauth_req.get_response(app)
         return resp
 
-    def put_user(self, app, req, user_id, user_email, service=None):
+    def put_user(self, app, req, user_id, user_email):
         user_key = req.headers.get('x-auth-user-key', str(uuid4()))
         swauth_req = Request.blank('%s%s/%s' % (self.auth_prefix,
                                                 self.version,
@@ -85,10 +83,24 @@ class SwauthClient(object):
                                             'x-auth-user-admin': 'true'})
         swauth_req.method = 'PUT'
         copy_env(req, swauth_req)
-        if service:
-            swauth_req.environ['liteauth.new_service'] = service
         resp = swauth_req.get_response(app)
         return resp
+
+    def update_service(self, app, req, user_email, service):
+        service_data = json.dumps({'service_plan': {'storage': service[0],
+                                                    'compute': service[1]}})
+        swauth_req = Request.blank('%s%s/%s/.services' % (self.auth_prefix,
+                                                          self.version,
+                                                          user_email),
+                                   headers={'x-auth-admin-user': '.super_admin',
+                                            'x-auth-admin-key': self.super_admin_key})
+        swauth_req.method = 'POST'
+        copy_env(req, swauth_req)
+        req.body = service_data
+        resp = swauth_req.get_response(app)
+        if not resp.status_int // 100 == 2:
+            self.logger.error('Cannot set %s service for user %s: %s'
+                              % (service, user_email, resp.status))
 
     def is_disabled(self):
         if self.super_admin_key:
