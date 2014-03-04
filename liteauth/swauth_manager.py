@@ -119,6 +119,13 @@ class SwauthManager(object):
                                              json.dumps(invite_data),
                                              req.environ):
                         return HTTPInternalServerError(request=req)
+                elif not whitelist_data and invite_data['email'] == user_email:
+                    if not store_data_in_url(self.whitelist_url,
+                                             self.app,
+                                             user_email,
+                                             json.dumps(invite_data),
+                                             req.environ):
+                        return HTTPInternalServerError(request=req)
             else:
                 if whitelist_data:
                     try:
