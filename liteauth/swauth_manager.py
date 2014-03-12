@@ -167,11 +167,11 @@ class SwauthManager(object):
                                               user_email)
             else:
                 return self.denied_response(req)
-            req_origin = req.headers.get('Origin', None)
+            req_origin = req.headers.get('origin', None)
             print req_origin
             print self.cors_allow_origin
             if req_origin and req_origin in self.cors_allow_origin:
-                    resp.headers['Access-Control-Allow-Origin'] = req_origin
+                    resp.headers['access-control-allow-origin'] = req_origin
             return resp
         return self.denied_response(req)
 
