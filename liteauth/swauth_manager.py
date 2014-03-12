@@ -82,7 +82,7 @@ class SwauthManager(object):
         if req_origin and req_origin in self.cors_allow_origin:
                 resp.headers['access-control-allow-origin'] = req_origin
                 resp.headers['access-control-allow-credentials'] = 'true'
-                resp.headers['access-control-allow-methods'] = 'GET, PUT'
+                resp.headers['access-control-allow-methods'] = 'GET, PUT, OPTIONS'
                 req_headers = req.headers.get('access-control-request-headers', None)
                 if req_headers:
                     resp.headers['access-control-allow-headers'] = req_headers
