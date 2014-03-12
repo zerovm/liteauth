@@ -70,6 +70,10 @@ class SwauthManager(object):
         self.invite_url = conf.get('invite_url', '').lower().rstrip('/')
         if not self.invite_url:
             raise ValueError('invite_url not set in config file')
+        self.cors_allow_origin = [
+            a.strip()
+            for a in conf.get('cors_allow_origin', '').split(',')
+            if a.strip()]
 
     @wsgify
     def __call__(self, req):
@@ -152,15 +156,20 @@ class SwauthManager(object):
                     # but used a different auth provider
                     return HTTPConflict(request=req)
             if req.method == 'GET':
-                return self.provider.get_user(self.app,
+                resp = self.provider.get_user(self.app,
                                               req,
                                               user_id,
                                               user_email)
             elif req.method == 'PUT':
-                return self.provider.put_user(self.app,
+                resp = self.provider.put_user(self.app,
                                               req,
                                               user_id,
                                               user_email)
+            else:
+                return self.denied_response(req)
+            req_origin = req.headers.get('Origin', None)
+            if req_origin and req_origin in self.cors_allow_origin:
+                    resp.headers['Access-Control-Allow-Origin'] = req_origin
         return self.denied_response(req)
 
     def denied_response(self, req):
