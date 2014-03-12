@@ -170,6 +170,7 @@ class SwauthManager(object):
             req_origin = req.headers.get('Origin', None)
             if req_origin and req_origin in self.cors_allow_origin:
                     resp.headers['Access-Control-Allow-Origin'] = req_origin
+            return resp
         return self.denied_response(req)
 
     def denied_response(self, req):
