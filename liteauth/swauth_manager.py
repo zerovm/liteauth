@@ -2,7 +2,7 @@ from urllib import quote
 from providers import load_provider
 from swift.common.swob import HTTPUnauthorized, \
     HTTPForbidden, wsgify, Response, HTTPInternalServerError, HTTPConflict
-from swift.common.utils import get_logger
+from swift.common.utils import get_logger, list_from_csv
 from swift.common.wsgi import make_pre_authed_request
 try:
     import simplejson as json
@@ -82,6 +82,10 @@ class SwauthManager(object):
         if req_origin and req_origin in self.cors_allow_origin:
                 resp.headers['access-control-allow-origin'] = req_origin
                 resp.headers['access-control-allow-credentials'] = 'true'
+                resp.headers['access-control-allow-methods'] = 'GET, PUT'
+                req_headers = req.headers.get('access-control-request-headers', None)
+                if req_headers:
+                    resp.headers['access-control-allow-headers'] = req_headers
         return resp
 
     def denied_response(self, req):
@@ -100,6 +104,10 @@ class SwauthManager(object):
         except ValueError:
             return self.denied_response(req)
         if endpoint == self.profile_path:
+            if req.method == 'OPTIONS':
+                headers = {'Allow': 'GET, PUT'}
+                resp = Response(status=200, request=req, headers=headers)
+                return resp
             account_id = req.environ.get('REMOTE_USER', '')
             if not account_id:
                 return HTTPUnauthorized(request=req)
