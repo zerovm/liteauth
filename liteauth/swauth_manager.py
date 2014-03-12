@@ -77,16 +77,18 @@ class SwauthManager(object):
 
     @wsgify
     def __call__(self, req):
+        resp = None
         if self.provider.is_disabled():  # profile management is disabled
-            return self.denied_response(req)
+            resp = self.denied_response(req)
+        endpoint = None
         try:
             (endpoint, _rest) = req.split_path(1, 2, True)
         except ValueError:
-            return self.denied_response(req)
-        if endpoint == self.profile_path:
+            resp = self.denied_response(req)
+        if endpoint and endpoint == self.profile_path:
             account_id = req.environ.get('REMOTE_USER', '')
             if not account_id:
-                return HTTPUnauthorized(request=req)
+                resp = HTTPUnauthorized(request=req)
             user_id, user_email = account_id.split(':')
             whitelist_data = get_data_from_url(self.whitelist_url,
                                                self.app,
@@ -101,13 +103,13 @@ class SwauthManager(object):
                                                 self.logger,
                                                 req.environ)
                 if not invite_data or isinstance(invite_data, dict):
-                    return self.denied_response(req)
+                    resp = self.denied_response(req)
                 try:
                     invite_data = json.loads(invite_data)
                 except Exception:
-                    return HTTPInternalServerError(request=req)
+                    resp = HTTPInternalServerError(request=req)
                 if not invite_data.get('service', None):
-                    return HTTPInternalServerError(request=req)
+                    resp = HTTPInternalServerError(request=req)
                 if not invite_data.get('email', None):
                     invite_data['email'] = user_email
                     invite_data['user_id'] = user_id
@@ -116,31 +118,31 @@ class SwauthManager(object):
                                              invite_code,
                                              json.dumps(invite_data),
                                              req.environ):
-                        return HTTPInternalServerError(request=req)
+                        resp = HTTPInternalServerError(request=req)
                     if not store_data_in_url(self.whitelist_url,
                                              self.app,
                                              user_email,
                                              json.dumps(invite_data),
                                              req.environ):
-                        return HTTPInternalServerError(request=req)
+                        resp = HTTPInternalServerError(request=req)
                 elif not whitelist_data and invite_data['email'] == user_email:
                     if not store_data_in_url(self.whitelist_url,
                                              self.app,
                                              user_email,
                                              json.dumps(invite_data),
                                              req.environ):
-                        return HTTPInternalServerError(request=req)
+                        resp = HTTPInternalServerError(request=req)
             else:
                 if whitelist_data:
                     try:
                         whitelist_data = json.loads(whitelist_data)
                     except Exception:
-                        return HTTPInternalServerError(request=req)
+                        resp = HTTPInternalServerError(request=req)
                 if not whitelist_data or not isinstance(whitelist_data, dict):
-                    return Response(request=req, status=402,
+                    resp = Response(request=req, status=402,
                                     body='Account not in whitelist')
                 if not whitelist_data.get('service', None):
-                    return HTTPInternalServerError(request=req)
+                    resp = HTTPInternalServerError(request=req)
                 current_user = whitelist_data.get('user_id', None)
                 if not current_user:
                     whitelist_data['email'] = user_email
@@ -150,11 +152,11 @@ class SwauthManager(object):
                                              user_email,
                                              json.dumps(whitelist_data),
                                              req.environ):
-                        return HTTPInternalServerError(request=req)
+                        resp = HTTPInternalServerError(request=req)
                 elif current_user != user_id:
                     # user subscribed to the service already
                     # but used a different auth provider
-                    return HTTPConflict(request=req)
+                    resp = HTTPConflict(request=req)
             if req.method == 'GET':
                 resp = self.provider.get_user(self.app,
                                               req,
@@ -165,15 +167,12 @@ class SwauthManager(object):
                                               req,
                                               user_id,
                                               user_email)
-            else:
-                return self.denied_response(req)
-            req_origin = req.headers.get('origin', None)
-            print req_origin
-            print self.cors_allow_origin
-            if req_origin and req_origin in self.cors_allow_origin:
-                    resp.headers['access-control-allow-origin'] = req_origin
-            return resp
-        return self.denied_response(req)
+        if not resp:
+            resp = self.denied_response(req)
+        req_origin = req.headers.get('origin', None)
+        if req_origin and req_origin in self.cors_allow_origin:
+                resp.headers['access-control-allow-origin'] = req_origin
+        return resp
 
     def denied_response(self, req):
         if req.remote_user:
