@@ -2,7 +2,7 @@ from urllib import quote
 from providers import load_provider
 from swift.common.swob import HTTPUnauthorized, \
     HTTPForbidden, wsgify, Response, HTTPInternalServerError, HTTPConflict
-from swift.common.utils import get_logger, list_from_csv
+from swift.common.utils import get_logger
 from swift.common.wsgi import make_pre_authed_request
 try:
     import simplejson as json

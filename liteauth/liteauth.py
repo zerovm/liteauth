@@ -279,12 +279,6 @@ class LiteAuth(object):
                                                   self.app, email, account_id,
                                                   req.environ):
                         return HTTPInternalServerError()
-            # elif whitelist_id.startswith(self.prefix):
-            #     pass
-            # else:
-            #     self.logger.warning('Whitelist for user %s '
-            #                         'contains wrong data: %s' % (email, whitelist_id))
-            #     return HTTPInternalServerError()
         stored_info = retrieve_metadata(self.app,
                                         self.version,
                                         account_id,
@@ -333,7 +327,6 @@ class LiteAuth(object):
                                         % (self.service_endpoint,
                                            state or '/',
                                            account_id)})
-        #print resp.headers
         req.response = resp
         return resp
 
