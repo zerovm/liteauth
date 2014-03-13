@@ -27,6 +27,7 @@ setup(
             'liteaccounting=liteauth.liteaccounting:filter_factory',
             'liteswauth=liteauth.swauth_manager:filter_factory',
             'oauthlogin=liteauth.oauth_login:filter_factory',
+            'shared_containers=liteauth.shared_containers:filter_factory',
         ],
     },
 )
