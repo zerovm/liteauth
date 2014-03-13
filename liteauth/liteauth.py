@@ -1,7 +1,7 @@
 from urllib import quote
 from time import time
 from hashlib import md5
-from providers.abstract_oauth import load_provider
+from providers import load_oauth_provider
 
 from swift.common.constraints import MAX_META_VALUE_LENGTH
 from swift.common.middleware.acl import clean_acl
@@ -108,11 +108,11 @@ def store_account_in_whitelist(whitelist_url, app, email, account_id, env):
 
 
 class LiteAuthStorage(object):
-    def __init__(self, env, prefix):
+    def __init__(self, env):
         self.cache = cache_from_env(env)
         if not self.cache:
             raise Exception('Memcache required')
-        self.prefix = prefix
+        self.prefix = 'l_'
 
     def get_id(self, token):
         account_id = None
@@ -161,12 +161,11 @@ class LiteAuth(object):
         self.storage_driver = None
         self.metadata_key = conf.get('metadata_key', 'userdata').lower()
         self.redirect_url = '%s%s' % (self.service_endpoint, self.auth_path)
-        self.provider = load_provider(conf.get('oauth_provider', 'google_oauth'))
-        self.prefix = self.provider.PREFIX
+        self.provider = load_oauth_provider(conf.get('oauth_provider', 'google_oauth'))
 
     def __call__(self, env, start_response):
         req = Request(env)
-        self.storage_driver = LiteAuthStorage(env, self.prefix)
+        self.storage_driver = LiteAuthStorage(env)
         if req.path.startswith(self.auth_path):
             state = None
             if req.params:
@@ -230,6 +229,7 @@ class LiteAuth(object):
     def do_google_oauth(self, state=None, approval_prompt='auto'):
         oauth_client = self.provider.create_for_redirect(
             self.conf,
+            self.redirect_url,
             state=state,
             approval_prompt=approval_prompt)
         return HTTPFound(location=oauth_client.redirect)
@@ -247,7 +247,9 @@ class LiteAuth(object):
                                             % (self.service_endpoint, state)})
             req.response = resp
             return resp
-        oauth_client = self.provider.create_for_token(self.conf, code)
+        oauth_client = self.provider.create_for_token(self.conf,
+                                                      self.redirect_url,
+                                                      code)
         token = oauth_client.access_token
         if not token:
             req.response = HTTPUnauthorized()
@@ -256,7 +258,7 @@ class LiteAuth(object):
         if not user_info:
             req.response = HTTPForbidden()
             return req.response
-        account_id = self.prefix + user_info.get('id')
+        account_id = self.provider.PREFIX + user_info.get('id')
         self.storage_driver.store_id(account_id,
                                      oauth_client.access_token,
                                      oauth_client.expires_in)
@@ -347,7 +349,9 @@ class LiteAuth(object):
             rtoken = user_data.get('rtoken', None)
             if not rtoken:
                 return None
-            oauth_client = self.provider.create_for_refresh(self.conf, rtoken)
+            oauth_client = self.provider.create_for_refresh(self.conf,
+                                                            self.redirect_url,
+                                                            rtoken)
             headers = {
                 'X-Auth-Token': oauth_client.access_token,
                 'X-Auth-Token-Expires': oauth_client.expires_in,

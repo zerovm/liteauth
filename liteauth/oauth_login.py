@@ -1,5 +1,5 @@
 from liteauth import LiteAuthStorage
-from providers.abstract_oauth import load_provider
+from providers import load_oauth_provider
 from swift.common.swob import wsgify, HTTPUnauthorized, HTTPForbidden, Response, HTTPFound
 from swift.common.utils import get_logger, urlparse
 
@@ -10,9 +10,8 @@ class OauthLogin(object):
         self.app = app
         self.conf = conf
         self.logger = get_logger(conf, log_route='liteauth')
-        self.provider = load_provider(
+        self.provider = load_oauth_provider(
             conf.get('oauth_provider', 'google_oauth'))
-        self.prefix = self.provider.PREFIX
         self.auth_endpoint = conf.get('auth_endpoint', '')
         if not self.auth_endpoint:
             raise ValueError('auth_endpoint not set in config file')
@@ -39,6 +38,7 @@ class OauthLogin(object):
 
     @wsgify
     def __call__(self, req):
+        self.storage_driver = LiteAuthStorage(req.environ)
         if req.path == self.login_path:
             state = None
             if req.params:
@@ -47,11 +47,17 @@ class OauthLogin(object):
                 if code:
                     return self.handle_login(req, code, state)
             return self.handle_oauth(state)
+        token = req.headers.get('x-auth-token', None)
+        if token:
+            account_id, _junk = self.storage_driver.get_id(token)
+            if account_id:
+                req.environ['REMOTE_USER'] = account_id
         return self.app
 
     def handle_login(self, req, code, state):
-        self.storage_driver = LiteAuthStorage(req.environ, self.prefix)
-        oauth_client = self.provider.create_for_token(self.conf, code)
+        oauth_client = self.provider.create_for_token(self.conf,
+                                                      self.auth_endpoint,
+                                                      code)
         token = oauth_client.access_token
         if not token:
             req.response = HTTPUnauthorized(request=req)
@@ -60,7 +66,7 @@ class OauthLogin(object):
         if not user_info:
             req.response = HTTPForbidden(request=req)
             return req.response
-        account_id = '%s:%s' % (self.prefix + user_info.get('id'),
+        account_id = '%s:%s' % (self.provider.PREFIX + user_info.get('id'),
                                 user_info.get('email'))
         self.storage_driver.store_id(account_id,
                                      token,
@@ -79,6 +85,7 @@ class OauthLogin(object):
     def handle_oauth(self, state=None, approval_prompt='auto'):
         oauth_client = self.provider.create_for_redirect(
             self.conf,
+            self.auth_endpoint,
             state=state,
             approval_prompt=approval_prompt)
         return HTTPFound(location=oauth_client.redirect)

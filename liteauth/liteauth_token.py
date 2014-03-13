@@ -1,7 +1,6 @@
 from Cookie import SimpleCookie
+from urllib import quote
 import datetime
-from liteauth import LiteAuthStorage
-from providers.abstract_oauth import load_provider
 from swift.common.swob import Request, HeaderKeyDict
 from swift.common.utils import get_logger, urlparse
 
@@ -48,21 +47,21 @@ class LiteAuthToken(object):
         self.app = app
         self.conf = conf
         self.logger = get_logger(conf, log_route='lite-auth')
-        self.storage_driver = conf.get('storage_driver', LiteAuthStorage)
-        provider = load_provider(conf.get('oauth_provider', 'google_oauth'))
-        self.prefix = provider.PREFIX
-        self.cookie_key = conf.get('cookie_key', 'session')
+        # self.storage_driver = conf.get('storage_driver', LiteAuthStorage)
 
     def __call__(self, env, start_response):
         req = Request(env)
-        token = extract_from_cookie_to_header(req,
-                                              self.cookie_key,
-                                              ('x-auth-token', 'x-storage-token'))
-        if token:
-            account_id, _junk = \
-                self.storage_driver(env, self.prefix).get_id(token)
-            if account_id:
-                req.environ['REMOTE_USER'] = account_id
+        extract_from_cookie_to_header(req,
+                                      'session',
+                                      ('x-auth-token', 'x-storage-token'))
+        # extract_from_cookie_to_header(req,
+        #                               'storage',
+        #                               ('x-storage-url',))
+        # if token:
+        #     account_id, _junk = \
+        #         self.storage_driver(env).get_id(token)
+        #     if account_id:
+        #         req.environ['REMOTE_USER'] = account_id
 
         def cookie_resp(status, response_headers, exc_info=None):
             resp_headers = HeaderKeyDict(response_headers)
@@ -85,7 +84,7 @@ class LiteAuthToken(object):
                     response_headers.append(('Set-Cookie', new_cookie))
                     new_cookie = create_auth_cookie('storage',
                                                     domain,
-                                                    token=storage_url,
+                                                    token=quote(storage_url, safe=''),
                                                     expires_in=expires_in,
                                                     secure=secure)
                     response_headers.append(('Set-Cookie', new_cookie))
