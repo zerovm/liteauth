@@ -74,15 +74,22 @@ class SwauthManager(object):
             a.strip()
             for a in conf.get('cors_allow_origin', '').split(',')
             if a.strip()]
+        self.payload_limit = 65535
 
     @wsgify
     def __call__(self, req):
         req_origin = req.headers.get('origin', None)
+        # we are redirecting to other method, just to wrap it up in CORS
+        # headers when response is created
         resp = self.handle(req)
         if req_origin and req_origin in self.cors_allow_origin:
                 resp.headers['access-control-allow-origin'] = req_origin
+                # we must set allow-credentials otherwise browsers won't send
+                # cookies, even when the cookies are set for correct domain
                 resp.headers['access-control-allow-credentials'] = 'true'
                 resp.headers['access-control-allow-methods'] = 'GET, PUT, OPTIONS'
+                # we just accept any requested headers,
+                # response headers are filtered anyway
                 req_headers = req.headers.get('access-control-request-headers', None)
                 if req_headers:
                     resp.headers['access-control-allow-headers'] = req_headers
@@ -96,6 +103,22 @@ class SwauthManager(object):
             self.logger.increment('unauthorized')
             return HTTPUnauthorized(request=req)
 
+    def extract_payload(self, req):
+        if 0 < req.content_length < self.payload_limit:
+            # we should never read more than payload limit
+            # who knows what bomb user sent us
+            try:
+                body = req.environ['wsgi.input'].read(self.payload_limit)
+                data = json.loads(body)
+            except Exception:
+                return
+            invite_code = data.get('invite-code', None)
+            if invite_code:
+                req.headers['x-auth-invite-code'] = invite_code
+            user_key = data.get('user-key', None)
+            if user_key:
+                req.headers['x-auth-user-key'] = user_key
+
     def handle(self, req):
         if self.provider.is_disabled():  # profile management is disabled
             return self.denied_response(req)
@@ -104,9 +127,13 @@ class SwauthManager(object):
         except ValueError:
             return self.denied_response(req)
         if endpoint == self.profile_path:
+            # we are serving OPTIONS method from here as otherwise it won't
+            # be served by Swauth that has no support for CORS
             if req.method == 'OPTIONS':
                 headers = {'Allow': 'GET, PUT'}
-                resp = Response(status=200, request=req, headers=headers)
+                resp = Response(status=200,
+                                request=req,
+                                headers=headers)
                 return resp
             account_id = req.environ.get('REMOTE_USER', '')
             if not account_id:
@@ -117,6 +144,11 @@ class SwauthManager(object):
                                                user_email,
                                                self.logger,
                                                req.environ)
+            if req.method == 'PUT':
+                # as a workaround for Chrome browser bug
+                # http://code.google.com/p/chromium/issues/detail?id=96007
+                # we read data from PUT request and place it in headers
+                self.extract_payload(req)
             invite_code = req.headers.get('x-auth-invite-code', None)
             if invite_code and req.method == 'PUT':
                 invite_data = get_data_from_url(self.invite_url,
