@@ -1,3 +1,4 @@
+from uuid import uuid4
 from liteauth import LiteAuthStorage
 from providers import load_oauth_provider
 from swift.common.swob import wsgify, HTTPUnauthorized, HTTPForbidden, Response, HTTPFound
@@ -35,6 +36,7 @@ class OauthLogin(object):
                                        '%s://%s'
                                        % (self.scheme, self.auth_domain))
         self.storage_driver = None
+        self.oauth_login_timeout = 3600
 
     @wsgify
     def __call__(self, req):
@@ -55,6 +57,11 @@ class OauthLogin(object):
         return self.app
 
     def handle_login(self, req, code, state):
+        stored_state = self.storage_driver.get_id(state)
+        if not stored_state:
+            req.response = HTTPUnauthorized(request=req,
+                                            body='Login time expired')
+            return req.response
         oauth_client = self.provider.create_for_token(self.conf,
                                                       self.auth_endpoint,
                                                       code)
@@ -79,14 +86,17 @@ class OauthLogin(object):
                             'x-storage-url': self.auth_endpoint,
                             'location': '%s%s?account=%s' %
                                         (self.service_domain,
-                                         state or '/',
+                                         stored_state or '/',
                                          account_id)})
 
     def handle_oauth(self, state=None, approval_prompt='auto'):
+        uid = uuid4().hex
+        self.storage_driver.store_id(uid, state or '/',
+                                     self.oauth_login_timeout)
         oauth_client = self.provider.create_for_redirect(
             self.conf,
             self.auth_endpoint,
-            state=state,
+            state=uid,
             approval_prompt=approval_prompt)
         return HTTPFound(location=oauth_client.redirect)
 
