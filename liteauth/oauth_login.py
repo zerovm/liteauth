@@ -75,8 +75,8 @@ class OauthLogin(object):
             return req.response
         account_id = '%s:%s' % (self.provider.PREFIX + user_info.get('id'),
                                 user_info.get('email'))
-        self.storage_driver.store_id(account_id,
-                                     token,
+        self.storage_driver.store_id(token,
+                                     account_id,
                                      oauth_client.expires_in)
         return Response(request=req, status=302,
                         headers={
