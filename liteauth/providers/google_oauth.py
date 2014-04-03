@@ -43,7 +43,8 @@ class Client(OauthClientInterface):
         gclient.expires_in = c.expires_in
         if hasattr(c, 'refresh_token'):
             gclient.refresh_token = c.refresh_token
-            new_client = cls.create_for_refresh(conf, c.refresh_token)
+            new_client = cls.create_for_refresh(conf, redirect_url,
+                                                c.refresh_token)
             gclient.access_token = new_client.access_token
             gclient.expires_in = new_client.expires_in
         gclient.userinfo = c.request('/userinfo')
