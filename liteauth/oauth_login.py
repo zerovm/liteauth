@@ -57,7 +57,7 @@ class OauthLogin(object):
         return self.app
 
     def handle_login(self, req, code, state):
-        stored_state = self.storage_driver.get_id(state)
+        stored_state, expires = self.storage_driver.get_id(state)
         if not stored_state:
             req.response = HTTPUnauthorized(request=req,
                                             body='Login time expired')
