@@ -131,11 +131,11 @@ class LiteAuthStorage(object):
         self.cache.delete(memcache_token_key)
         print ['del', memcache_token_key]
 
-    def store_id(self, account_id, token, expires_in):
+    def store_id(self, token, value, expires_in):
         expires = time() + expires_in
         memcache_token_key = '%s/token/%s' % (self.prefix, token)
-        print ['set', memcache_token_key, str(account_id), expires]
-        self.cache.set(memcache_token_key, (expires, account_id),
+        print ['set', memcache_token_key, str(value), expires]
+        self.cache.set(memcache_token_key, (expires, value),
                        time=float(expires - time()))
 
 
@@ -286,8 +286,8 @@ class LiteAuth(object):
             req.response = HTTPForbidden()
             return req.response
         account_id = self.provider.PREFIX + user_info.get('id')
-        self.storage_driver.store_id(account_id,
-                                     oauth_client.access_token,
+        self.storage_driver.store_id(oauth_client.access_token,
+                                     account_id,
                                      oauth_client.expires_in)
         if self.whitelist_url:
             email = user_info.get('email', None)
@@ -434,8 +434,8 @@ class LiteAuth(object):
                                     self.version,
                                     account_id),
             }
-            self.storage_driver.store_id(account_id,
-                                         oauth_client.access_token,
+            self.storage_driver.store_id(oauth_client.access_token,
+                                         account_id,
                                          oauth_client.expires_in)
             return headers
         return None
