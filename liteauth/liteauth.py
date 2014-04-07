@@ -2,7 +2,7 @@ from urllib import quote
 from time import time
 from hashlib import md5
 from uuid import uuid4
-from liteauth.swauth_manager import get_data_from_url, store_data_in_url
+from swauth_manager import get_data_from_url, store_data_in_url
 from providers import load_oauth_provider
 
 from swift.common.constraints import MAX_META_VALUE_LENGTH
