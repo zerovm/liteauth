@@ -2,7 +2,7 @@ from urllib import quote
 from providers import load_provider
 from swift.common.swob import HTTPUnauthorized, \
     HTTPForbidden, wsgify, Response, HTTPInternalServerError, HTTPConflict
-from swift.common.utils import get_logger
+from swift.common.utils import get_logger, TRUE_VALUES
 from swift.common.wsgi import make_pre_authed_request
 try:
     import simplejson as json
@@ -75,25 +75,41 @@ class SwauthManager(object):
             for a in conf.get('cors_allow_origin', '').split(',')
             if a.strip()]
         self.payload_limit = 65535
+        self.allow_passthrough = conf.get('allow_passthrough', 'f').lower() \
+            in TRUE_VALUES
 
     @wsgify
     def __call__(self, req):
-        req_origin = req.headers.get('origin', None)
-        # we are redirecting to other method, just to wrap it up in CORS
-        # headers when response is created
-        resp = self.handle(req)
-        if req_origin and req_origin in self.cors_allow_origin:
-                resp.headers['access-control-allow-origin'] = req_origin
-                # we must set allow-credentials otherwise browsers won't send
-                # cookies, even when the cookies are set for correct domain
-                resp.headers['access-control-allow-credentials'] = 'true'
-                resp.headers['access-control-allow-methods'] = 'GET, PUT, OPTIONS'
-                # we just accept any requested headers,
-                # response headers are filtered anyway
-                req_headers = req.headers.get('access-control-request-headers', None)
-                if req_headers:
-                    resp.headers['access-control-allow-headers'] = req_headers
-        return resp
+        try:
+            (endpoint, _rest) = req.split_path(1, 2, True)
+        except ValueError:
+            return self.denied_response(req)
+        if endpoint == self.profile_path:
+            if self.provider.is_disabled():  # profile management is disabled
+                return self.denied_response(req)
+            req_origin = req.headers.get('origin', None)
+            # we are redirecting to other method, just to wrap it up in CORS
+            # headers when response is created
+            resp = self.handle(req)
+            if req_origin and req_origin in self.cors_allow_origin:
+                    resp.headers['access-control-allow-origin'] = req_origin
+                    # we must set allow-credentials
+                    # otherwise browsers won't send cookies,
+                    # even when the cookies are set for correct domain
+                    resp.headers['access-control-allow-credentials'] = 'true'
+                    resp.headers['access-control-allow-methods'] = \
+                        'GET, PUT, OPTIONS'
+                    # we just accept any requested headers,
+                    # response headers are filtered anyway
+                    req_headers = \
+                        req.headers.get('access-control-request-headers', None)
+                    if req_headers:
+                        resp.headers['access-control-allow-headers'] = \
+                            req_headers
+            return resp
+        if self.allow_passthrough:
+            return self.app
+        return self.denied_response(req)
 
     def denied_response(self, req):
         if req.remote_user:
@@ -120,108 +136,102 @@ class SwauthManager(object):
                 req.headers['x-auth-user-key'] = user_key
 
     def handle(self, req):
-        if self.provider.is_disabled():  # profile management is disabled
-            return self.denied_response(req)
-        try:
-            (endpoint, _rest) = req.split_path(1, 2, True)
-        except ValueError:
-            return self.denied_response(req)
-        if endpoint == self.profile_path:
-            # we are serving OPTIONS method from here as otherwise it won't
-            # be served by Swauth that has no support for CORS
-            if req.method == 'OPTIONS':
-                headers = {'Allow': 'GET, PUT'}
-                resp = Response(status=200,
-                                request=req,
-                                headers=headers)
-                return resp
-            account_id = req.environ.get('REMOTE_USER', '')
-            if not account_id:
-                return HTTPUnauthorized(request=req)
-            user_id, user_email = account_id.split(':')
-            whitelist_data = get_data_from_url(self.whitelist_url,
-                                               self.app,
-                                               user_email,
-                                               self.logger,
-                                               req.environ)
-            if req.method == 'PUT':
-                # as a workaround for Chrome browser bug
-                # http://code.google.com/p/chromium/issues/detail?id=96007
-                # we read data from PUT request and place it in headers
-                self.extract_payload(req)
-            invite_code = req.headers.get('x-auth-invite-code', None)
-            if invite_code and req.method == 'PUT':
-                invite_data = get_data_from_url(self.invite_url,
-                                                self.app,
-                                                invite_code,
-                                                self.logger,
-                                                req.environ)
-                if not invite_data or isinstance(invite_data, dict):
-                    return self.denied_response(req)
+        # we are serving OPTIONS method from here as otherwise it won't
+        # be served by Swauth that has no support for CORS
+        if req.method == 'OPTIONS':
+            headers = {'Allow': 'GET, PUT'}
+            resp = Response(status=200,
+                            request=req,
+                            headers=headers)
+            return resp
+        account_id = req.environ.get('REMOTE_USER', '')
+        if not account_id:
+            return HTTPUnauthorized(request=req)
+        user_id, user_email = account_id.split(':')
+        whitelist_data = get_data_from_url(self.whitelist_url,
+                                           self.app,
+                                           user_email,
+                                           self.logger,
+                                           req.environ)
+        if req.method == 'PUT':
+            # as a workaround for Chrome browser bug
+            # http://code.google.com/p/chromium/issues/detail?id=96007
+            # we read data from PUT request and place it in headers
+            self.extract_payload(req)
+        invite_code = req.headers.get('x-auth-invite-code', None)
+        if invite_code and req.method == 'PUT':
+            invite_data = get_data_from_url(self.invite_url,
+                                            self.app,
+                                            invite_code,
+                                            self.logger,
+                                            req.environ)
+            if not invite_data or isinstance(invite_data, dict):
+                return self.denied_response(req)
+            try:
+                invite_data = json.loads(invite_data)
+            except Exception:
+                return HTTPInternalServerError(request=req)
+            if not invite_data.get('service', None):
+                return HTTPInternalServerError(request=req)
+            if not invite_data.get('email', None):
+                invite_data['email'] = user_email
+                invite_data['user_id'] = user_id
+                if not store_data_in_url(self.invite_url,
+                                         self.app,
+                                         invite_code,
+                                         json.dumps(invite_data),
+                                         req.environ):
+                    return HTTPInternalServerError(request=req)
+                if not store_data_in_url(self.whitelist_url,
+                                         self.app,
+                                         user_email,
+                                         json.dumps(invite_data),
+                                         req.environ):
+                    return HTTPInternalServerError(request=req)
+            elif not whitelist_data and invite_data['email'] == user_email:
+                if not store_data_in_url(self.whitelist_url,
+                                         self.app,
+                                         user_email,
+                                         json.dumps(invite_data),
+                                         req.environ):
+                    return HTTPInternalServerError(request=req)
+        else:
+            if whitelist_data:
                 try:
-                    invite_data = json.loads(invite_data)
+                    whitelist_data = json.loads(whitelist_data)
                 except Exception:
                     return HTTPInternalServerError(request=req)
-                if not invite_data.get('service', None):
+            if not whitelist_data or not isinstance(whitelist_data, dict):
+                return Response(request=req, status=402,
+                                body='Account not in whitelist')
+            if not whitelist_data.get('service', None):
+                return HTTPInternalServerError(request=req)
+            current_user = whitelist_data.get('user_id', None)
+            if not current_user:
+                whitelist_data['email'] = user_email
+                whitelist_data['user_id'] = user_id
+                if not store_data_in_url(self.whitelist_url,
+                                         self.app,
+                                         user_email,
+                                         json.dumps(whitelist_data),
+                                         req.environ):
                     return HTTPInternalServerError(request=req)
-                if not invite_data.get('email', None):
-                    invite_data['email'] = user_email
-                    invite_data['user_id'] = user_id
-                    if not store_data_in_url(self.invite_url,
-                                             self.app,
-                                             invite_code,
-                                             json.dumps(invite_data),
-                                             req.environ):
-                        return HTTPInternalServerError(request=req)
-                    if not store_data_in_url(self.whitelist_url,
-                                             self.app,
-                                             user_email,
-                                             json.dumps(invite_data),
-                                             req.environ):
-                        return HTTPInternalServerError(request=req)
-                elif not whitelist_data and invite_data['email'] == user_email:
-                    if not store_data_in_url(self.whitelist_url,
-                                             self.app,
-                                             user_email,
-                                             json.dumps(invite_data),
-                                             req.environ):
-                        return HTTPInternalServerError(request=req)
-            else:
-                if whitelist_data:
-                    try:
-                        whitelist_data = json.loads(whitelist_data)
-                    except Exception:
-                        return HTTPInternalServerError(request=req)
-                if not whitelist_data or not isinstance(whitelist_data, dict):
-                    return Response(request=req, status=402,
-                                    body='Account not in whitelist')
-                if not whitelist_data.get('service', None):
-                    return HTTPInternalServerError(request=req)
-                current_user = whitelist_data.get('user_id', None)
-                if not current_user:
-                    whitelist_data['email'] = user_email
-                    whitelist_data['user_id'] = user_id
-                    if not store_data_in_url(self.whitelist_url,
-                                             self.app,
-                                             user_email,
-                                             json.dumps(whitelist_data),
-                                             req.environ):
-                        return HTTPInternalServerError(request=req)
-                elif current_user != user_id:
-                    # user subscribed to the service already
-                    # but used a different auth provider
-                    return HTTPConflict(request=req)
-            if req.method == 'GET':
-                return self.provider.get_user(self.app,
-                                              req,
-                                              user_id,
-                                              user_email)
-            elif req.method == 'PUT':
-                return self.provider.put_user(self.app,
-                                              req,
-                                              user_id,
-                                              user_email)
+            elif current_user != user_id:
+                # user subscribed to the service already
+                # but used a different auth provider
+                return HTTPConflict(request=req)
+        if req.method == 'GET':
+            return self.provider.get_user(self.app,
+                                          req,
+                                          user_id,
+                                          user_email)
+        elif req.method == 'PUT':
+            return self.provider.put_user(self.app,
+                                          req,
+                                          user_id,
+                                          user_email)
         return self.denied_response(req)
+
 
 def filter_factory(global_conf, **local_conf):
     """Returns a WSGI filter app for use with paste.deploy."""
