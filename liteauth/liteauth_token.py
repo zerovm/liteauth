@@ -27,7 +27,8 @@ def create_auth_cookie(cookie_name, auth_domain,
 def extract_from_cookie_to_header(req, cookie_key, header_names):
     value = None
     try:
-        value = SimpleCookie(req.environ.get('HTTP_COOKIE', ''))[cookie_key].value
+        value = SimpleCookie(
+            req.environ.get('HTTP_COOKIE', ''))[cookie_key].value
         if value:
             for name in header_names:
                 req.headers[name] = value
@@ -61,7 +62,7 @@ class LiteAuthToken(object):
                 expires_in = int(resp_headers.get('x-auth-token-expires', 0))
                 storage_url = resp_headers.get('x-storage-url', '')
                 path_parts = urlparse(storage_url)
-                domain = path_parts.netloc
+                domain = path_parts.hostname
                 secure = False
                 if path_parts.scheme == 'https':
                     secure = True
@@ -75,7 +76,8 @@ class LiteAuthToken(object):
                     response_headers.append(('Set-Cookie', new_cookie))
                     new_cookie = create_auth_cookie('storage',
                                                     domain,
-                                                    token=quote(storage_url, safe=''),
+                                                    token=quote(storage_url,
+                                                                safe=''),
                                                     expires_in=expires_in,
                                                     secure=secure)
                     response_headers.append(('Set-Cookie', new_cookie))
