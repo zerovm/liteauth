@@ -62,12 +62,12 @@ class SwauthManager(object):
                                       'could not load SwauthClient')(conf)
         # url for whitelist objects
         # Example: /v1/liteauth/whitelist
-        self.whitelist_url = conf.get('whitelist_url', '').lower().rstrip('/')
+        self.whitelist_url = conf.get('whitelist_url', '').rstrip('/')
         if not self.whitelist_url:
             raise ValueError('whitelist_url not set in config file')
         # url for invite objects
         # Example: /v1/liteauth/invites
-        self.invite_url = conf.get('invite_url', '').lower().rstrip('/')
+        self.invite_url = conf.get('invite_url', '').rstrip('/')
         if not self.invite_url:
             raise ValueError('invite_url not set in config file')
         self.cors_allow_origin = [
