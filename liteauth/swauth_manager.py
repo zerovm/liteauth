@@ -174,6 +174,8 @@ class SwauthManager(object):
             if not invite_data.get('service', None):
                 return HTTPInternalServerError(request=req)
             if not invite_data.get('email', None):
+                # it's a new invite code
+                # add the user to white list
                 invite_data['email'] = user_email
                 invite_data['user_id'] = user_id
                 if not store_data_in_url(self.invite_url,
@@ -189,12 +191,18 @@ class SwauthManager(object):
                                          req.environ):
                     return HTTPInternalServerError(request=req)
             elif not whitelist_data and invite_data['email'] == user_email:
+                # it's a retry for the same invite from the same user
+                # re-add it to white list if not already there
                 if not store_data_in_url(self.whitelist_url,
                                          self.app,
                                          user_email,
                                          json.dumps(invite_data),
                                          req.environ):
                     return HTTPInternalServerError(request=req)
+            elif invite_data['user_id'] != user_id:
+                # it's a different user for an already used invite
+                # deny the request
+                return self.denied_response(req)
         else:
             if whitelist_data:
                 try:
